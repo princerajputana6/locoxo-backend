@@ -8,6 +8,7 @@ const productSchema = new mongoose.Schema({
     image: { type: Array, required: true },
     category: { type: mongoose.Schema.Types.ObjectId, ref: 'category', required: true },
     subCategory: { type: String, required: true },
+    sizes: { type: Array },
     
     variants: [{
         size: { type: String, required: true },

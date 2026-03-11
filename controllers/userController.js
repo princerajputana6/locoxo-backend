@@ -100,4 +100,15 @@ const adminLogin = async (req, res) => {
 }
 
 
-export { loginUser, registerUser, adminLogin }
+// Route to get all customers (admin only)
+const getAllCustomers = async (req, res) => {
+    try {
+        const customers = await userModel.find({}).select('-password').sort({ createdAt: -1 });
+        res.json({ success: true, customers });
+    } catch (error) {
+        console.log(error);
+        res.json({ success: false, message: error.message });
+    }
+}
+
+export { loginUser, registerUser, adminLogin, getAllCustomers }

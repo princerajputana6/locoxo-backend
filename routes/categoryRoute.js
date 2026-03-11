@@ -8,6 +8,6 @@ categoryRouter.get('/list', listCategories);
 categoryRouter.get('/:id', getCategoryById);
 categoryRouter.post('/add', adminAuth, addCategory);
 categoryRouter.put('/update/:id', adminAuth, updateCategory);
-categoryRouter.delete('/delete/:id', adminAuth, deleteCategory);
+categoryRouter.delete('/remove/:id', adminAuth, deleteCategory);
 
 export default categoryRouter;
