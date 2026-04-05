@@ -46,6 +46,10 @@ const orderSchema = new mongoose.Schema({
     payment: { type: Boolean, required: true, default: false },
     paymentId: { type: String },
     
+    // Influencer tracking
+    influencerId: { type: mongoose.Schema.Types.ObjectId, ref: 'influencer' },
+    referralCode: { type: String },
+    
     returnRequest: {
         requested: { type: Boolean, default: false },
         reason: { type: String },

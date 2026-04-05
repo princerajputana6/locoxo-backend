@@ -13,6 +13,7 @@ import reviewRouter from './routes/reviewRoute.js'
 import wishlistRouter from './routes/wishlistRoute.js'
 import bannerRouter from './routes/bannerRoute.js'
 import returnRouter from './routes/returnRoute.js'
+import influencerRouter from './routes/influencerRoute.js'
 
 // App Config
 const app = express()
@@ -90,6 +91,7 @@ app.use('/api/review',reviewRouter)
 app.use('/api/wishlist',wishlistRouter)
 app.use('/api/banner',bannerRouter)
 app.use('/api/return',returnRouter)
+app.use('/api/influencer',influencerRouter)
 
 app.get('/',(req,res)=>{
     res.send("API Working")

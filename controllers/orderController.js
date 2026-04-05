@@ -1,5 +1,6 @@
 import orderModel from "../models/orderModel.js";
 import userModel from "../models/userModel.js";
+import influencerModel from "../models/influencerModel.js";
 import Stripe from 'stripe'
 import razorpay from 'razorpay'
 
@@ -22,7 +23,7 @@ const placeOrder = async (req,res) => {
         
         console.log('Full Request Body:', JSON.stringify(req.body, null, 2));
         
-        const { userId, items, amount, address, orderNumber, subtotal, shippingCharge } = req.body;
+        const { userId, items, amount, address, orderNumber, subtotal, shippingCharge, referralCode } = req.body;
         
         console.log('Extracted Values:', { userId, orderNumber, subtotal, itemsCount: items?.length, amount });
 
@@ -41,6 +42,21 @@ const placeOrder = async (req,res) => {
             paymentMethod:"COD",
             payment:false,
             date: Date.now()
+        }
+
+        // Handle influencer referral
+        if (referralCode) {
+            const influencer = await influencerModel.findOne({ referralCode });
+            if (influencer) {
+                orderData.influencerId = influencer._id;
+                orderData.referralCode = referralCode;
+                
+                // Update influencer stats
+                influencer.conversions += 1;
+                influencer.totalSales += amount;
+                influencer.totalEarnings += (amount * influencer.commissionRate) / 100;
+                await influencer.save();
+            }
         }
 
         const newOrder = new orderModel(orderData)
@@ -143,7 +159,7 @@ const verifyStripe = async (req,res) => {
 const placeOrderRazorpay = async (req,res) => {
     try {
         
-        const { userId, items, amount, address, orderNumber, subtotal, shippingCharge } = req.body
+        const { userId, items, amount, address, orderNumber, subtotal, shippingCharge, referralCode } = req.body
 
         const orderData = {
             userId,
@@ -156,6 +172,21 @@ const placeOrderRazorpay = async (req,res) => {
             paymentMethod:"Razorpay",
             payment:false,
             date: Date.now()
+        }
+
+        // Handle influencer referral
+        if (referralCode) {
+            const influencer = await influencerModel.findOne({ referralCode });
+            if (influencer) {
+                orderData.influencerId = influencer._id;
+                orderData.referralCode = referralCode;
+                
+                // Update influencer stats (will be finalized on payment verification)
+                influencer.conversions += 1;
+                influencer.totalSales += amount;
+                influencer.totalEarnings += (amount * influencer.commissionRate) / 100;
+                await influencer.save();
+            }
         }
 
         const newOrder = new orderModel(orderData)
