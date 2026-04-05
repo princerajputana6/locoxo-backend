@@ -4,7 +4,7 @@ import Stripe from 'stripe'
 import razorpay from 'razorpay'
 
 // global variables
-const currency = 'inr'
+const currency = 'inr' 
 const deliveryCharge = 10
 
 // gateway initialize
@@ -20,11 +20,22 @@ const placeOrder = async (req,res) => {
     
     try {
         
-        const { userId, items, amount, address} = req.body;
+        console.log('Full Request Body:', JSON.stringify(req.body, null, 2));
+        
+        const { userId, items, amount, address, orderNumber, subtotal, shippingCharge } = req.body;
+        
+        console.log('Extracted Values:', { userId, orderNumber, subtotal, itemsCount: items?.length, amount });
+
+        if (!orderNumber || !subtotal) {
+            return res.json({success:false, message: `Missing required fields: ${!orderNumber ? 'orderNumber ' : ''}${!subtotal ? 'subtotal' : ''}`})
+        }
 
         const orderData = {
             userId,
+            orderNumber,
             items,
+            subtotal,
+            shippingCharge: shippingCharge || deliveryCharge,
             address,
             amount,
             paymentMethod:"COD",
@@ -41,7 +52,7 @@ const placeOrder = async (req,res) => {
 
 
     } catch (error) {
-        console.log(error)
+        console.log('Order Error:', error)
         res.json({success:false,message:error.message})
     }
 
@@ -50,6 +61,8 @@ const placeOrder = async (req,res) => {
 // Placing orders using Stripe Method
 const placeOrderStripe = async (req,res) => {
     try {
+        
+        console.log('Full Request Body:', JSON.stringify(req.body, null, 2));
         
         const { userId, items, amount, address} = req.body
         const { origin } = req.headers;
@@ -130,11 +143,14 @@ const verifyStripe = async (req,res) => {
 const placeOrderRazorpay = async (req,res) => {
     try {
         
-        const { userId, items, amount, address} = req.body
+        const { userId, items, amount, address, orderNumber, subtotal, shippingCharge } = req.body
 
         const orderData = {
             userId,
+            orderNumber,
             items,
+            subtotal,
+            shippingCharge: shippingCharge || deliveryCharge,
             address,
             amount,
             paymentMethod:"Razorpay",

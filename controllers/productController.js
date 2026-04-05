@@ -15,13 +15,6 @@ const addProduct = async (req, res) => {
 
         const images = [image1, image2, image3, image4].filter((item) => item !== undefined)
 
-        let imagesUrl = await Promise.all(
-            images.map(async (item) => {
-                let result = await cloudinary.uploader.upload(item.path, { resource_type: 'image' });
-                return result.secure_url
-            })
-        )
-
         const productData = {
             name,
             description,
@@ -38,16 +31,31 @@ const addProduct = async (req, res) => {
             careInstructions,
             tags: tags ? JSON.parse(tags) : [],
             status: status || 'active',
-            image: imagesUrl,
+            image: [],
             date: Date.now()
         }
-
-        console.log(productData);
 
         const product = new productModel(productData);
         await product.save()
 
-        res.json({ success: true, message: "Product Added" })
+        let imagesUrl = await Promise.all(
+            images.map(async (item, index) => {
+                let result = await cloudinary.uploader.upload(item.path, { 
+                    resource_type: 'image',
+                    folder: `locoxo/products/${product._id}`,
+                    public_id: `image_${index + 1}`
+                });
+                return result.secure_url
+            })
+        )
+
+        product.image = imagesUrl;
+        await product.save();
+
+        console.log('Product created with ID:', product._id);
+        console.log('Images uploaded to Cloudinary folder: locoxo/products/' + product._id);
+
+        res.json({ success: true, message: "Product Added", productId: product._id })
 
     } catch (error) {
         console.log(error)
@@ -92,7 +100,6 @@ const listProducts = async (req, res) => {
         const skip = (page - 1) * limit;
         
         const products = await productModel.find(filter)
-            .populate('category', 'name slug')
             .sort(sortOptions)
             .skip(skip)
             .limit(parseInt(limit));
@@ -134,7 +141,7 @@ const singleProduct = async (req, res) => {
         const { productId } = req.body;
         const { userId } = req.query;
         
-        const product = await productModel.findById(productId).populate('category', 'name slug');
+        const product = await productModel.findById(productId);
         
         if (!product) {
             return res.json({ success: false, message: 'Product not found' });
@@ -233,4 +240,26 @@ const updateProduct = async (req, res) => {
     }
 };
 
-export { listProducts, addProduct, removeProduct, singleProduct, getRelatedProducts, getRecentlyViewed, updateProduct }
+const updateStock = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { stock } = req.body;
+        
+        const product = await productModel.findByIdAndUpdate(
+            id, 
+            { stock: Number(stock) }, 
+            { new: true }
+        );
+        
+        if (!product) {
+            return res.json({ success: false, message: 'Product not found' });
+        }
+        
+        res.json({ success: true, message: 'Stock updated successfully', product });
+    } catch (error) {
+        console.log(error);
+        res.json({ success: false, message: error.message });
+    }
+};
+
+export { listProducts, addProduct, removeProduct, singleProduct, getRelatedProducts, getRecentlyViewed, updateProduct, updateStock }
