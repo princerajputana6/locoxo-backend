@@ -4,20 +4,26 @@ const bannerSchema = new mongoose.Schema({
     title: { type: String, required: true },
     subtitle: { type: String },
     image: { type: String, required: true },
-    mobileImage: { type: String },
+    link: { type: String },
+    isActive: { type: Boolean, default: true },
     
-    linkType: { type: String, enum: ['product', 'category', 'url', 'none'], default: 'none' },
-    linkUrl: { type: String },
-    linkProduct: { type: mongoose.Schema.Types.ObjectId, ref: 'product' },
-    linkCategory: { type: mongoose.Schema.Types.ObjectId, ref: 'category' },
-    
-    position: { type: String, enum: ['hero', 'middle', 'footer'], default: 'hero' },
-    displayOrder: { type: Number, default: 0 },
-    
-    status: { type: String, enum: ['active', 'inactive'], default: 'active' },
-    
-    validFrom: { type: Date },
-    validUntil: { type: Date }
+    // Placement on home page - after which section should this banner appear
+    placement: { 
+        type: String, 
+        enum: [
+            'after-hero',
+            'after-instagram', 
+            'after-match-mood',
+            'after-price-combo',
+            'after-best-seller',
+            'after-new-arrivals',
+            'after-video-intro',
+            'after-favorites',
+            'after-stats'
+        ], 
+        default: 'after-hero' 
+    },
+    displayOrder: { type: Number, default: 0 }
 }, { timestamps: true });
 
 const bannerModel = mongoose.models.banner || mongoose.model('banner', bannerSchema);

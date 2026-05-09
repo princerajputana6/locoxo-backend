@@ -1,19 +1,30 @@
 import influencerModel from "../models/influencerModel.js";
 import { v2 as cloudinary } from 'cloudinary'
+import bcrypt from 'bcrypt'
+import jwt from 'jsonwebtoken'
 
 // Add new influencer
 const addInfluencer = async (req, res) => {
     try {
-        const { name, email, phone, instagramHandle, productId, commissionRate } = req.body;
+        const { name, email, password, phone, instagramHandle, productId, commissionRate } = req.body;
         const image = req.file;
 
-        if (!image) {
-            return res.json({ success: false, message: "Image is required" });
+        // Check if influencer already exists
+        const exists = await influencerModel.findOne({ email });
+        if (exists) {
+            return res.json({ success: false, message: "Influencer with this email already exists" });
         }
 
-        // Upload image to cloudinary
-        const imageUpload = await cloudinary.uploader.upload(image.path, { resource_type: 'image' });
-        const imageUrl = imageUpload.secure_url;
+        // Hash password
+        const salt = await bcrypt.genSalt(10);
+        const hashedPassword = await bcrypt.hash(password, salt);
+
+        // Upload image to cloudinary if provided
+        let imageUrl = '';
+        if (image) {
+            const imageUpload = await cloudinary.uploader.upload(image.path, { resource_type: 'image' });
+            imageUrl = imageUpload.secure_url;
+        }
 
         // Generate unique referral code
         const referralCode = 'INF' + Date.now() + Math.floor(Math.random() * 1000);
@@ -21,6 +32,7 @@ const addInfluencer = async (req, res) => {
         const influencerData = {
             name,
             email,
+            password: hashedPassword,
             phone,
             instagramHandle,
             productId,
@@ -32,7 +44,12 @@ const addInfluencer = async (req, res) => {
         const influencer = new influencerModel(influencerData);
         await influencer.save();
 
-        res.json({ success: true, message: "Influencer added successfully", influencer });
+        res.json({ success: true, message: "Influencer added successfully", influencer: {
+            _id: influencer._id,
+            name: influencer.name,
+            email: influencer.email,
+            referralCode: influencer.referralCode
+        } });
 
     } catch (error) {
         console.log(error);
@@ -170,6 +187,80 @@ const getInfluencerStats = async (req, res) => {
     }
 };
 
+// Influencer login
+const influencerLogin = async (req, res) => {
+    try {
+        const { email, password } = req.body;
+
+        const influencer = await influencerModel.findOne({ email });
+
+        if (!influencer) {
+            return res.json({ success: false, message: "Influencer doesn't exist" });
+        }
+
+        if (influencer.status !== 'active') {
+            return res.json({ success: false, message: "Your account is inactive. Please contact admin." });
+        }
+
+        const isMatch = await bcrypt.compare(password, influencer.password);
+
+        if (isMatch) {
+            const token = jwt.sign({ id: influencer._id }, process.env.JWT_SECRET);
+            res.json({ success: true, token, influencer: {
+                _id: influencer._id,
+                name: influencer.name,
+                email: influencer.email,
+                referralCode: influencer.referralCode
+            } });
+        } else {
+            res.json({ success: false, message: 'Invalid credentials' });
+        }
+
+    } catch (error) {
+        console.log(error);
+        res.json({ success: false, message: error.message });
+    }
+};
+
+// Get influencer dashboard data
+const getInfluencerDashboard = async (req, res) => {
+    try {
+        const influencerId = req.body.influencerId; // From auth middleware
+        
+        const influencer = await influencerModel.findById(influencerId).populate('productId', 'name price image');
+        
+        if (!influencer) {
+            return res.json({ success: false, message: "Influencer not found" });
+        }
+
+        const dashboardData = {
+            profile: {
+                name: influencer.name,
+                email: influencer.email,
+                phone: influencer.phone,
+                instagramHandle: influencer.instagramHandle,
+                referralCode: influencer.referralCode,
+                commissionRate: influencer.commissionRate,
+                status: influencer.status
+            },
+            stats: {
+                totalClicks: influencer.clicks,
+                totalConversions: influencer.conversions,
+                totalSales: influencer.totalSales,
+                totalEarnings: influencer.totalEarnings,
+                conversionRate: influencer.clicks > 0 ? ((influencer.conversions / influencer.clicks) * 100).toFixed(2) : 0
+            },
+            product: influencer.productId
+        };
+
+        res.json({ success: true, data: dashboardData });
+
+    } catch (error) {
+        console.log(error);
+        res.json({ success: false, message: error.message });
+    }
+};
+
 export { 
     addInfluencer, 
     listInfluencers, 
@@ -178,5 +269,7 @@ export {
     updateInfluencer, 
     deleteInfluencer, 
     trackClick,
-    getInfluencerStats
+    getInfluencerStats,
+    influencerLogin,
+    getInfluencerDashboard
 };

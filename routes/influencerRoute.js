@@ -7,9 +7,12 @@ import {
     updateInfluencer, 
     deleteInfluencer, 
     trackClick,
-    getInfluencerStats
+    getInfluencerStats,
+    influencerLogin,
+    getInfluencerDashboard
 } from '../controllers/influencerController.js';
 import adminAuth from '../middleware/adminAuth.js';
+import authUser from '../middleware/auth.js';
 import upload from '../middleware/multer.js';
 
 const influencerRouter = express.Router();
@@ -21,6 +24,10 @@ influencerRouter.get('/:id', adminAuth, getInfluencer);
 influencerRouter.put('/:id', adminAuth, updateInfluencer);
 influencerRouter.delete('/:id', adminAuth, deleteInfluencer);
 influencerRouter.get('/stats/:id', adminAuth, getInfluencerStats);
+
+// Influencer auth routes
+influencerRouter.post('/login', influencerLogin);
+influencerRouter.post('/dashboard', authUser, getInfluencerDashboard);
 
 // Public routes
 influencerRouter.get('/active/all', getActiveInfluencers);

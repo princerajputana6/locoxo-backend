@@ -3,6 +3,8 @@ import userModel from "../models/userModel.js";
 import influencerModel from "../models/influencerModel.js";
 import Stripe from 'stripe'
 import razorpay from 'razorpay'
+import generateInvoice from '../utils/invoiceGenerator.js';
+import fs from 'fs';
 
 // global variables
 const currency = 'inr' 
@@ -64,7 +66,16 @@ const placeOrder = async (req,res) => {
 
         await userModel.findByIdAndUpdate(userId,{cartData:{}})
 
-        res.json({success:true,message:"Order Placed"})
+        // Generate invoice
+        try {
+            const invoicePath = await generateInvoice(orderData);
+            console.log('Invoice generated:', invoicePath);
+        } catch (invoiceError) {
+            console.error('Invoice generation error:', invoiceError);
+            // Don't fail the order if invoice generation fails
+        }
+
+        res.json({success:true,message:"Order Placed", orderId: newOrder._id})
 
 
     } catch (error) {
@@ -140,8 +151,17 @@ const verifyStripe = async (req,res) => {
 
     try {
         if (success === "true") {
-            await orderModel.findByIdAndUpdate(orderId, {payment:true});
+            const order = await orderModel.findByIdAndUpdate(orderId, {payment:true}, { new: true });
             await userModel.findByIdAndUpdate(userId, {cartData: {}})
+            
+            // Generate invoice
+            try {
+                const invoicePath = await generateInvoice(order);
+                console.log('Invoice generated:', invoicePath);
+            } catch (invoiceError) {
+                console.error('Invoice generation error:', invoiceError);
+            }
+            
             res.json({success: true});
         } else {
             await orderModel.findByIdAndDelete(orderId)
@@ -219,8 +239,17 @@ const verifyRazorpay = async (req,res) => {
 
         const orderInfo = await razorpayInstance.orders.fetch(razorpay_order_id)
         if (orderInfo.status === 'paid') {
-            await orderModel.findByIdAndUpdate(orderInfo.receipt,{payment:true});
-            await userModel.findByIdAndUpdate(userId,{cartData:{}})
+            const order = await orderModel.findByIdAndUpdate(orderInfo.receipt,{payment:true}, { new: true });
+            await userModel.findByIdAndUpdate(req.body.userId,{cartData:{}})
+            
+            // Generate invoice
+            try {
+                const invoicePath = await generateInvoice(order);
+                console.log('Invoice generated:', invoicePath);
+            } catch (invoiceError) {
+                console.error('Invoice generation error:', invoiceError);
+            }
+            
             res.json({ success: true, message: "Payment Successful" })
         } else {
              res.json({ success: false, message: 'Payment Failed' });
@@ -278,4 +307,29 @@ const updateStatus = async (req,res) => {
     }
 }
 
-export {verifyRazorpay, verifyStripe ,placeOrder, placeOrderStripe, placeOrderRazorpay, allOrders, userOrders, updateStatus}
+// Download Invoice
+const downloadInvoice = async (req, res) => {
+    try {
+        const { orderId } = req.params;
+        const order = await orderModel.findById(orderId);
+
+        if (!order) {
+            return res.json({ success: false, message: 'Order not found' });
+        }
+
+        const invoicePath = `invoices/invoice-${order.orderNumber}.pdf`;
+        
+        if (fs.existsSync(invoicePath)) {
+            res.download(invoicePath);
+        } else {
+            // Generate invoice if it doesn't exist
+            const newInvoicePath = await generateInvoice(order);
+            res.download(newInvoicePath);
+        }
+    } catch (error) {
+        console.log(error);
+        res.json({ success: false, message: error.message });
+    }
+};
+
+export {verifyRazorpay, verifyStripe ,placeOrder, placeOrderStripe, placeOrderRazorpay, allOrders, userOrders, updateStatus, downloadInvoice}

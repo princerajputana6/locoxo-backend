@@ -5,7 +5,13 @@ import userModel from "../models/userModel.js";
 
 
 const createToken = (id) => {
-    return jwt.sign({ id }, process.env.JWT_SECRET)
+    const secret = process.env.JWT_SECRET;
+    if (!secret) {
+        console.error('JWT_SECRET is not defined in environment variables!');
+        console.error('Current env keys:', Object.keys(process.env).filter(k => k.includes('JWT') || k.includes('SECRET')));
+        throw new Error('JWT_SECRET environment variable is not set');
+    }
+    return jwt.sign({ id }, secret)
 }
 
 // Route for user login

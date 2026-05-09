@@ -3,10 +3,11 @@ import mongoose from "mongoose";
 const influencerSchema = new mongoose.Schema({
     name: { type: String, required: true },
     email: { type: String, required: true, unique: true },
+    password: { type: String, required: true },
     phone: { type: String },
     instagramHandle: { type: String },
-    image: { type: String, required: true },
-    productId: { type: mongoose.Schema.Types.ObjectId, ref: 'product', required: true },
+    image: { type: String },
+    productId: { type: mongoose.Schema.Types.ObjectId, ref: 'product' },
     
     // Commission and earnings
     commissionRate: { type: Number, default: 10 }, // percentage

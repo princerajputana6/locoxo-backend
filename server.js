@@ -18,6 +18,12 @@ import influencerRouter from './routes/influencerRoute.js'
 // App Config
 const app = express()
 const port = process.env.PORT || 4000
+
+// Debug: Check if JWT_SECRET is loaded
+console.log('=== ENV CHECK ===');
+console.log('JWT_SECRET loaded:', process.env.JWT_SECRET ? 'YES ✓' : 'NO ✗');
+console.log('=================');
+
 connectDB()
 connectCloudinary()
 
