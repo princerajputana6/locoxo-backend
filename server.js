@@ -1,6 +1,8 @@
 import express from 'express'
+import http from 'http'
 import cors from 'cors'
 import 'dotenv/config'
+import { initRealtime } from './realtime.js'
 import connectDB from './config/mongodb.js'
 import connectCloudinary from './config/cloudinary.js'
 import userRouter from './routes/userRoute.js'
@@ -14,6 +16,9 @@ import wishlistRouter from './routes/wishlistRoute.js'
 import bannerRouter from './routes/bannerRoute.js'
 import returnRouter from './routes/returnRoute.js'
 import influencerRouter from './routes/influencerRoute.js'
+import ticketRouter from './routes/ticketRoute.js'
+import inventoryRouter from './routes/inventoryRoute.js'
+import shipmentRouter from './routes/shipmentRoute.js'
 
 // App Config
 const app = express()
@@ -98,9 +103,14 @@ app.use('/api/wishlist',wishlistRouter)
 app.use('/api/banner',bannerRouter)
 app.use('/api/return',returnRouter)
 app.use('/api/influencer',influencerRouter)
+app.use('/api/ticket',ticketRouter)
+app.use('/api/inventory',inventoryRouter)
+app.use('/api/shipment',shipmentRouter)
 
 app.get('/',(req,res)=>{
     res.send("API Working")
 })
 
-app.listen(port, ()=> console.log('Server started on PORT : '+ port))
+const httpServer = http.createServer(app)
+initRealtime(httpServer)
+httpServer.listen(port, ()=> console.log('Server started on PORT : '+ port))

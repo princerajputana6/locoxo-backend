@@ -136,6 +136,92 @@ const getUserProfile = async (req, res) => {
     }
 }
 
+// Route for Google sign-in
+const googleAuth = async (req, res) => {
+    try {
+        const { email, name, googleId, photoURL } = req.body;
+
+        if (!email || !googleId) {
+            return res.json({ success: false, message: 'Missing Google account details' });
+        }
+
+        let user = await userModel.findOne({ email });
+
+        if (!user) {
+            user = new userModel({
+                name: name || email.split('@')[0],
+                email,
+                googleId,
+                photoURL,
+                password: 'google-oauth-' + googleId
+            });
+            await user.save();
+        } else if (!user.googleId) {
+            user.googleId = googleId;
+            if (photoURL) user.photoURL = photoURL;
+            await user.save();
+        }
+
+        const token = createToken(user._id);
+        res.json({ success: true, token });
+    } catch (error) {
+        console.log(error);
+        res.json({ success: false, message: error.message });
+    }
+}
+
+// Add an address to the user
+const addAddress = async (req, res) => {
+    try {
+        const {
+            userId, type, name, phone,
+            street, addressLine2, landmark,
+            city, state, zipCode, country,
+            lat, lng, isDefault
+        } = req.body;
+
+        const user = await userModel.findById(userId);
+        if (!user) return res.json({ success: false, message: 'User not found' });
+
+        if (isDefault || user.addresses.length === 0) {
+            user.addresses.forEach(a => { a.isDefault = false; });
+        }
+
+        user.addresses.push({
+            type: type || 'home',
+            name, phone, street, addressLine2, landmark,
+            city, state, zipCode, country: country || 'India',
+            lat, lng,
+            isDefault: isDefault || user.addresses.length === 0
+        });
+        await user.save();
+
+        res.json({ success: true, message: 'Address added', addresses: user.addresses });
+    } catch (error) {
+        console.log(error);
+        res.json({ success: false, message: error.message });
+    }
+}
+
+// Delete an address
+const deleteAddress = async (req, res) => {
+    try {
+        const { userId } = req.body;
+        const { id } = req.params;
+
+        const user = await userModel.findById(userId);
+        if (!user) return res.json({ success: false, message: 'User not found' });
+
+        user.addresses = user.addresses.filter(a => a._id.toString() !== id);
+        await user.save();
+
+        res.json({ success: true, message: 'Address deleted', addresses: user.addresses });
+    } catch (error) {
+        console.log(error);
+        res.json({ success: false, message: error.message });
+    }
+}
+
 // Route to update user profile
 const updateUserProfile = async (req, res) => {
     try {
@@ -164,4 +250,4 @@ const updateUserProfile = async (req, res) => {
     }
 }
 
-export { loginUser, registerUser, adminLogin, getAllCustomers, getUserProfile, updateUserProfile }
+export { loginUser, registerUser, adminLogin, getAllCustomers, getUserProfile, updateUserProfile, googleAuth, addAddress, deleteAddress }
