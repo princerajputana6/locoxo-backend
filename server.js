@@ -19,6 +19,11 @@ import influencerRouter from './routes/influencerRoute.js'
 import ticketRouter from './routes/ticketRoute.js'
 import inventoryRouter from './routes/inventoryRoute.js'
 import shipmentRouter from './routes/shipmentRoute.js'
+import subscriptionRouter from './routes/subscriptionRoute.js'
+import referralRouter from './routes/referralRoute.js'
+import analyticsRouter from './routes/analyticsRoute.js'
+import campaignRouter from './routes/campaignRoute.js'
+import aiRouter from './routes/aiRoute.js'
 
 // App Config
 const app = express()
@@ -106,6 +111,11 @@ app.use('/api/influencer',influencerRouter)
 app.use('/api/ticket',ticketRouter)
 app.use('/api/inventory',inventoryRouter)
 app.use('/api/shipment',shipmentRouter)
+app.use('/api/subscription',subscriptionRouter)
+app.use('/api/referral',referralRouter)
+app.use('/api/analytics',analyticsRouter)
+app.use('/api/campaign',campaignRouter)
+app.use('/api/ai',aiRouter)
 
 app.get('/',(req,res)=>{
     res.send("API Working")

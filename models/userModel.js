@@ -5,6 +5,7 @@ const userSchema = new mongoose.Schema({
     email: { type: String, required: true, unique: true },
     password: { type: String },
     phone: { type: String },
+    phoneVerified: { type: Boolean, default: false },
     dob: { type: Date },
 
     googleId: { type: String },
@@ -48,6 +49,23 @@ const userSchema = new mongoose.Schema({
     }],
 
     recentlyViewed: [{ type: mongoose.Schema.Types.ObjectId, ref: 'product' }],
+
+    // ---- Referral program (customer-to-customer) ----
+    referralCode: { type: String, unique: true, sparse: true },
+    referredBy: { type: mongoose.Schema.Types.ObjectId, ref: 'user' },
+    referralCount: { type: Number, default: 0 },
+    referralEarnings: { type: Number, default: 0 },
+    referralRewarded: { type: Boolean, default: false }, // rewarded for first order yet?
+
+    // ---- Premium membership subscription ----
+    subscription: {
+        plan: { type: mongoose.Schema.Types.ObjectId, ref: 'membershipPlan' },
+        status: { type: String, enum: ['none', 'active', 'expired', 'cancelled'], default: 'none' },
+        startDate: { type: Date },
+        endDate: { type: Date },
+        autoRenew: { type: Boolean, default: false },
+        lastPaymentId: { type: String }
+    },
 
     status: { type: String, enum: ['active', 'inactive', 'blocked'], default: 'active' }
 }, { minimize: false, timestamps: true })

@@ -5,10 +5,47 @@ import Stripe from 'stripe'
 import razorpay from 'razorpay'
 import generateInvoice from '../utils/invoiceGenerator.js';
 import fs from 'fs';
+import { createOrder as createCashfreeOrder, getOrderStatus as getCashfreeStatus } from '../services/cashfreeService.js';
 
 // global variables
-const currency = 'inr' 
+const currency = 'inr'
 const deliveryCharge = 10
+
+// Reward the referrer (and the referred user) on the referred user's first order.
+const applyReferralReward = async (userId) => {
+    try {
+        const user = await userModel.findById(userId);
+        if (!user || !user.referredBy || user.referralRewarded) return;
+
+        const referrerReward = Number(process.env.REFERRAL_REWARD_AMOUNT || 200);
+        const refereeReward = Number(process.env.REFERRAL_REWARDEE_AMOUNT || 100);
+
+        const referrer = await userModel.findById(user.referredBy);
+        if (referrer) {
+            referrer.wallet.balance += referrerReward;
+            referrer.wallet.transactions.push({
+                description: `Referral reward — ${user.name} placed their first order`,
+                amount: referrerReward,
+                type: 'credit'
+            });
+            referrer.referralCount += 1;
+            referrer.referralEarnings += referrerReward;
+            await referrer.save();
+        }
+
+        // Welcome reward for the referred user
+        user.wallet.balance += refereeReward;
+        user.wallet.transactions.push({
+            description: 'Welcome referral reward',
+            amount: refereeReward,
+            type: 'credit'
+        });
+        user.referralRewarded = true;
+        await user.save();
+    } catch (err) {
+        console.error('Referral reward error:', err);
+    }
+};
 
 // gateway initialize
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY)
@@ -65,6 +102,9 @@ const placeOrder = async (req,res) => {
         await newOrder.save()
 
         await userModel.findByIdAndUpdate(userId,{cartData:{}})
+
+        // Customer referral reward (first order)
+        await applyReferralReward(userId)
 
         // Generate invoice
         try {
@@ -153,7 +193,8 @@ const verifyStripe = async (req,res) => {
         if (success === "true") {
             const order = await orderModel.findByIdAndUpdate(orderId, {payment:true}, { new: true });
             await userModel.findByIdAndUpdate(userId, {cartData: {}})
-            
+            await applyReferralReward(userId)
+
             // Generate invoice
             try {
                 const invoicePath = await generateInvoice(order);
@@ -241,7 +282,8 @@ const verifyRazorpay = async (req,res) => {
         if (orderInfo.status === 'paid') {
             const order = await orderModel.findByIdAndUpdate(orderInfo.receipt,{payment:true}, { new: true });
             await userModel.findByIdAndUpdate(req.body.userId,{cartData:{}})
-            
+            await applyReferralReward(req.body.userId)
+
             // Generate invoice
             try {
                 const invoicePath = await generateInvoice(order);
@@ -261,6 +303,98 @@ const verifyRazorpay = async (req,res) => {
     }
 }
 
+
+// Placing orders using Cashfree Method
+const placeOrderCashfree = async (req,res) => {
+    try {
+        const { userId, items, amount, address, orderNumber, subtotal, shippingCharge, referralCode, email } = req.body
+
+        const orderData = {
+            userId,
+            orderNumber,
+            items,
+            subtotal,
+            shippingCharge: shippingCharge || deliveryCharge,
+            address,
+            amount,
+            paymentMethod:"Cashfree",
+            payment:false,
+            date: Date.now()
+        }
+
+        // Handle influencer referral
+        if (referralCode) {
+            const influencer = await influencerModel.findOne({ referralCode });
+            if (influencer) {
+                orderData.influencerId = influencer._id;
+                orderData.referralCode = referralCode;
+                influencer.conversions += 1;
+                influencer.totalSales += amount;
+                influencer.totalEarnings += (amount * influencer.commissionRate) / 100;
+                await influencer.save();
+            }
+        }
+
+        const newOrder = new orderModel(orderData)
+        await newOrder.save()
+
+        const frontendUrl = process.env.FRONTEND_URL || req.headers.origin || 'http://localhost:5173'
+
+        const cfOrder = await createCashfreeOrder({
+            orderId: newOrder._id.toString(),
+            amount,
+            customer: {
+                id: userId.toString(),
+                name: address?.name,
+                email: email,
+                phone: address?.phone
+            },
+            returnUrl: `${frontendUrl}/verify-cashfree?orderId=${newOrder._id}`
+        })
+
+        res.json({
+            success: true,
+            orderId: newOrder._id,
+            paymentSessionId: cfOrder.payment_session_id,
+            cfOrderId: cfOrder.order_id,
+            mode: (process.env.CASHFREE_ENV || 'TEST').toUpperCase() === 'PROD' ? 'production' : 'sandbox'
+        })
+
+    } catch (error) {
+        console.log('Cashfree order error:', error)
+        res.json({success:false,message:error.message})
+    }
+}
+
+// Verify Cashfree payment
+const verifyCashfree = async (req,res) => {
+    try {
+        const { userId, orderId } = req.body
+        if (!orderId) return res.json({ success:false, message:'Missing orderId' })
+
+        const status = await getCashfreeStatus(orderId) // Cashfree order_id === our order _id
+
+        if (status === 'PAID') {
+            const order = await orderModel.findByIdAndUpdate(orderId, { payment:true }, { new:true })
+            await userModel.findByIdAndUpdate(userId, { cartData:{} })
+            await applyReferralReward(userId)
+
+            try {
+                await generateInvoice(order);
+            } catch (invoiceError) {
+                console.error('Invoice generation error:', invoiceError);
+            }
+
+            return res.json({ success:true, message:'Payment Successful' })
+        }
+
+        res.json({ success:false, message:`Payment not completed (status: ${status})` })
+
+    } catch (error) {
+        console.log(error)
+        res.json({success:false,message:error.message})
+    }
+}
 
 // All Orders data for Admin Panel
 const allOrders = async (req,res) => {
@@ -332,4 +466,4 @@ const downloadInvoice = async (req, res) => {
     }
 };
 
-export {verifyRazorpay, verifyStripe ,placeOrder, placeOrderStripe, placeOrderRazorpay, allOrders, userOrders, updateStatus, downloadInvoice}
+export {verifyRazorpay, verifyStripe ,placeOrder, placeOrderStripe, placeOrderRazorpay, placeOrderCashfree, verifyCashfree, allOrders, userOrders, updateStatus, downloadInvoice}

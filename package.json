@@ -12,6 +12,7 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.68.0",
     "bcrypt": "^5.1.1",
     "bwip-js": "^4.11.1",
     "cloudinary": "^2.4.0",
@@ -27,6 +28,7 @@
     "razorpay": "^2.9.4",
     "socket.io": "^4.8.3",
     "stripe": "^16.8.0",
+    "twilio": "^5.13.1",
     "validator": "^13.12.0"
   }
 }

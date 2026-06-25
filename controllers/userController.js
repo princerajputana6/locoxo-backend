@@ -2,6 +2,8 @@ import validator from "validator";
 import bcrypt from "bcrypt"
 import jwt from 'jsonwebtoken'
 import userModel from "../models/userModel.js";
+import { sendOtp, checkOtp, normalisePhone } from "../services/twilioService.js";
+import { generateReferralCode, ensureReferralCode } from "../utils/referral.js";
 
 
 const createToken = (id) => {
@@ -48,7 +50,7 @@ const loginUser = async (req, res) => {
 const registerUser = async (req, res) => {
     try {
 
-        const { name, email, password, phone, dob } = req.body;
+        const { name, email, password, phone, dob, referralCode } = req.body;
 
         // checking user already exists or not
         const exists = await userModel.findOne({ email });
@@ -68,12 +70,21 @@ const registerUser = async (req, res) => {
         const salt = await bcrypt.genSalt(10)
         const hashedPassword = await bcrypt.hash(password, salt)
 
+        // Resolve referrer (if a valid referral code was supplied)
+        let referredBy;
+        if (referralCode) {
+            const referrer = await userModel.findOne({ referralCode });
+            if (referrer) referredBy = referrer._id;
+        }
+
         const newUser = new userModel({
             name,
             email,
             password: hashedPassword,
             phone: phone || undefined,
-            dob: dob || undefined
+            dob: dob || undefined,
+            referralCode: await generateReferralCode(name),
+            referredBy
         })
 
         const user = await newUser.save()
@@ -222,6 +233,69 @@ const deleteAddress = async (req, res) => {
     }
 }
 
+// ---- OTP login via Twilio Verify ----
+
+// Step 1: send an OTP to the phone number
+const sendLoginOtp = async (req, res) => {
+    try {
+        const { phone } = req.body;
+        if (!phone) return res.json({ success: false, message: 'Phone number is required' });
+
+        const result = await sendOtp(phone);
+        res.json({
+            success: true,
+            message: 'OTP sent',
+            phone: result.to,
+            dev: result.dev || false // true when Twilio isn't configured (test OTP 123456)
+        });
+    } catch (error) {
+        console.log(error);
+        res.json({ success: false, message: error.message });
+    }
+}
+
+// Step 2: verify the OTP, then log in (creating the account if new)
+const verifyLoginOtp = async (req, res) => {
+    try {
+        const { phone, code, name, referralCode } = req.body;
+        if (!phone || !code) return res.json({ success: false, message: 'Phone and OTP are required' });
+
+        const check = await checkOtp(phone, code);
+        if (!check.approved) return res.json({ success: false, message: 'Invalid or expired OTP' });
+
+        const e164 = normalisePhone(phone);
+        let user = await userModel.findOne({ phone: e164 });
+
+        if (!user) {
+            // Resolve referrer if a code was supplied
+            let referredBy;
+            if (referralCode) {
+                const referrer = await userModel.findOne({ referralCode });
+                if (referrer) referredBy = referrer._id;
+            }
+            user = new userModel({
+                name: name || `User ${e164.slice(-4)}`,
+                email: `${e164.replace('+', '')}@otp.locoxo.in`,
+                phone: e164,
+                phoneVerified: true,
+                referralCode: await generateReferralCode(name),
+                referredBy
+            });
+            await user.save();
+        } else if (!user.phoneVerified) {
+            user.phoneVerified = true;
+            await ensureReferralCode(user);
+            await user.save();
+        }
+
+        const token = createToken(user._id);
+        res.json({ success: true, token });
+    } catch (error) {
+        console.log(error);
+        res.json({ success: false, message: error.message });
+    }
+}
+
 // Route to update user profile
 const updateUserProfile = async (req, res) => {
     try {
@@ -250,4 +324,4 @@ const updateUserProfile = async (req, res) => {
     }
 }
 
-export { loginUser, registerUser, adminLogin, getAllCustomers, getUserProfile, updateUserProfile, googleAuth, addAddress, deleteAddress }
+export { loginUser, registerUser, adminLogin, getAllCustomers, getUserProfile, updateUserProfile, googleAuth, addAddress, deleteAddress, sendLoginOtp, verifyLoginOtp }
