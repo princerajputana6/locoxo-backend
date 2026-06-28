@@ -7,14 +7,17 @@ import {
     updateThreshold,
     backfillSkus,
     bulkAddProducts,
-    barcodeSheetPdf
+    barcodeSheetPdf,
+    renderBarcodeLabel
 } from '../controllers/inventoryController.js'
 import adminAuth from '../middleware/adminAuth.js'
 
 const inventoryRouter = express.Router()
 
-// Barcode image is public so it can be loaded in <img src> from admin without token plumbing
+// Barcode images are public so they can be loaded in <img src> from admin without token plumbing
 inventoryRouter.get('/barcode/:sku', renderBarcode)
+// Labeled barcode (barcode + product details baked into one SVG image)
+inventoryRouter.get('/label/:sku', renderBarcodeLabel)
 
 // Bulk add products (SKU + barcode auto-generated per variant) + barcode PDF export
 inventoryRouter.post('/bulk-add', adminAuth, bulkAddProducts)

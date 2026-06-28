@@ -211,6 +211,58 @@ export const renderBarcode = async (req, res) => {
     }
 }
 
+const xmlEsc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+
+// GET /api/inventory/label/:sku?name=&price=&size=&color=&stock=
+// Returns a self-contained SVG "label" = product details + the barcode in one
+// downloadable image. Product details come from query params (the admin UI
+// already has them) or are looked up by SKU as a fallback.
+export const renderBarcodeLabel = async (req, res) => {
+    try {
+        const { sku } = req.params
+        let { name = '', price = '', size = '', color = '', stock = '' } = req.query
+
+        // Fallback: look the variant up by SKU if details weren't supplied.
+        if (!name) {
+            const p = await productModel.findOne({ 'variants.sku': sku }).lean()
+            if (p) {
+                name = p.name; price = price || p.price
+                const v = (p.variants || []).find(v => v.sku === sku)
+                if (v) { size = size || v.size; color = color || v.color; stock = stock === '' ? v.stock : stock }
+            }
+        }
+
+        const png = await bwipjs.toBuffer({
+            bcid: 'code128', text: sku, scale: 3, height: 12,
+            includetext: true, textxalign: 'center', textsize: 9,
+        })
+        const b64 = png.toString('base64')
+
+        const W = 280, pad = 12
+        const hasVariant = size && size !== '—'
+        const barY = hasVariant ? 64 : 50
+        const H = barY + 66
+        const imgW = W - pad * 2
+
+        const svg =
+`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
+  <rect x="0.5" y="0.5" width="${W - 1}" height="${H - 1}" rx="10" fill="#ffffff" stroke="#e2e6ec"/>
+  <text x="${pad}" y="22" font-family="Helvetica,Arial,sans-serif" font-size="13" font-weight="700" fill="#062B52">${xmlEsc(String(name).slice(0, 30))}</text>
+  ${hasVariant ? `<text x="${pad}" y="40" font-family="Helvetica,Arial,sans-serif" font-size="11" fill="#5b6b80">${xmlEsc(size)}${color ? ' · ' + xmlEsc(color) : ''}</text>` : ''}
+  <text x="${pad}" y="${hasVariant ? 58 : 42}" font-family="Helvetica,Arial,sans-serif" font-size="13" font-weight="700" fill="#0E4F86">Rs.${xmlEsc(price)}</text>
+  <image x="${pad}" y="${barY}" width="${imgW}" height="46" preserveAspectRatio="xMidYMid meet" href="data:image/png;base64,${b64}"/>
+  <text x="${W - pad}" y="${H - 8}" text-anchor="end" font-family="Helvetica,Arial,sans-serif" font-size="9" fill="#94a3b8">Stock: ${xmlEsc(stock)}</text>
+</svg>`
+
+        res.set('Content-Type', 'image/svg+xml')
+        res.set('Cache-Control', 'public, max-age=3600')
+        res.send(svg)
+    } catch (error) {
+        console.log(error)
+        res.status(400).json({ success: false, message: error.message })
+    }
+}
+
 // GET /api/inventory/summary  — counts for dashboard tiles
 export const inventorySummary = async (req, res) => {
     try {
