@@ -1,9 +1,13 @@
 import validator from "validator";
 import bcrypt from "bcrypt"
 import jwt from 'jsonwebtoken'
+import crypto from 'crypto'
 import userModel from "../models/userModel.js";
 import { sendOtp, checkOtp, normalisePhone } from "../services/twilioService.js";
+import { sendPasswordResetEmail, isConfigured as isEmailConfigured } from "../services/emailService.js";
 import { generateReferralCode, ensureReferralCode } from "../utils/referral.js";
+
+const hashToken = (raw) => crypto.createHash('sha256').update(raw).digest('hex');
 
 
 const createToken = (id) => {
@@ -324,4 +328,79 @@ const updateUserProfile = async (req, res) => {
     }
 }
 
-export { loginUser, registerUser, adminLogin, getAllCustomers, getUserProfile, updateUserProfile, googleAuth, addAddress, deleteAddress, sendLoginOtp, verifyLoginOtp }
+// ---- Password reset via email ----
+
+// Step 1: request a reset link
+const forgotPassword = async (req, res) => {
+    try {
+        const { email } = req.body;
+        if (!email || !validator.isEmail(email)) {
+            return res.json({ success: false, message: 'Please enter a valid email' });
+        }
+
+        const user = await userModel.findOne({ email });
+
+        // Always respond the same way so we don't reveal which emails exist.
+        const genericMsg = 'If an account exists for that email, a reset link has been sent.';
+
+        if (!user) {
+            return res.json({ success: true, message: genericMsg });
+        }
+
+        // Generate a raw token (sent in the link) and store only its hash.
+        const rawToken = crypto.randomBytes(32).toString('hex');
+        user.resetPasswordToken = hashToken(rawToken);
+        user.resetPasswordExpires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+        await user.save();
+
+        const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+        const resetLink = `${frontendUrl}/reset-password?token=${rawToken}`;
+
+        const result = await sendPasswordResetEmail(user.email, user.name, resetLink);
+
+        // In dev (no SMTP configured) return the link so the flow is testable.
+        res.json({
+            success: true,
+            message: genericMsg,
+            ...(result.dev ? { devLink: resetLink } : {}),
+        });
+    } catch (error) {
+        console.log(error);
+        res.json({ success: false, message: error.message });
+    }
+};
+
+// Step 2: verify token + set a new password
+const resetPassword = async (req, res) => {
+    try {
+        const { token, password } = req.body;
+        if (!token) return res.json({ success: false, message: 'Invalid reset link' });
+        if (!password || password.length < 8) {
+            return res.json({ success: false, message: 'Password must be at least 8 characters' });
+        }
+
+        const user = await userModel.findOne({
+            resetPasswordToken: hashToken(token),
+            resetPasswordExpires: { $gt: new Date() },
+        });
+
+        if (!user) {
+            return res.json({ success: false, message: 'Reset link is invalid or has expired' });
+        }
+
+        const salt = await bcrypt.genSalt(10);
+        user.password = await bcrypt.hash(password, salt);
+        user.resetPasswordToken = undefined;
+        user.resetPasswordExpires = undefined;
+        await user.save();
+
+        // Log the user straight in
+        const authToken = createToken(user._id);
+        res.json({ success: true, message: 'Password updated', token: authToken });
+    } catch (error) {
+        console.log(error);
+        res.json({ success: false, message: error.message });
+    }
+};
+
+export { loginUser, registerUser, adminLogin, getAllCustomers, getUserProfile, updateUserProfile, googleAuth, addAddress, deleteAddress, sendLoginOtp, verifyLoginOtp, forgotPassword, resetPassword }

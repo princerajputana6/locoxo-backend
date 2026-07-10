@@ -8,6 +8,10 @@ const userSchema = new mongoose.Schema({
     phoneVerified: { type: Boolean, default: false },
     dob: { type: Date },
 
+    // Password reset (email)
+    resetPasswordToken: { type: String },
+    resetPasswordExpires: { type: Date },
+
     googleId: { type: String },
     photoURL: { type: String },
 
