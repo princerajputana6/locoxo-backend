@@ -1,5 +1,6 @@
 import influencerModel from "../models/influencerModel.js";
 import { v2 as cloudinary } from 'cloudinary'
+import { ensureCloudinary } from '../config/cloudinary.js'
 import bcrypt from 'bcrypt'
 import jwt from 'jsonwebtoken'
 
@@ -22,6 +23,7 @@ const addInfluencer = async (req, res) => {
         // Upload image to cloudinary if provided
         let imageUrl = '';
         if (image) {
+            ensureCloudinary()
             const imageUpload = await cloudinary.uploader.upload(image.path, { resource_type: 'image' });
             imageUrl = imageUpload.secure_url;
         }

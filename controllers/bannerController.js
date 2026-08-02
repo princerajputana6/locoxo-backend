@@ -1,5 +1,6 @@
 import bannerModel from '../models/bannerModel.js';
 import { v2 as cloudinary } from 'cloudinary';
+import { ensureCloudinary } from '../config/cloudinary.js';
 
 const listBanners = async (req, res) => {
     try {
@@ -44,6 +45,7 @@ const addBanner = async (req, res) => {
         }
 
         // Upload image to cloudinary
+        ensureCloudinary()
         const imageUpload = await cloudinary.uploader.upload(image.path, { resource_type: 'image' });
 
         const bannerData = {

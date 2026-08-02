@@ -8,7 +8,8 @@ import {
     backfillSkus,
     bulkAddProducts,
     barcodeSheetPdf,
-    renderBarcodeLabel
+    renderBarcodeLabel,
+    renderBarcodeLabelPdf
 } from '../controllers/inventoryController.js'
 import adminAuth from '../middleware/adminAuth.js'
 
@@ -18,6 +19,8 @@ const inventoryRouter = express.Router()
 inventoryRouter.get('/barcode/:sku', renderBarcode)
 // Labeled barcode (barcode + product details baked into one SVG image)
 inventoryRouter.get('/label/:sku', renderBarcodeLabel)
+// Same label as a printable PDF (most portable format for download/print)
+inventoryRouter.get('/label-pdf/:sku', renderBarcodeLabelPdf)
 
 // Bulk add products (SKU + barcode auto-generated per variant) + barcode PDF export
 inventoryRouter.post('/bulk-add', adminAuth, bulkAddProducts)

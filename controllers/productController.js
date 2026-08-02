@@ -1,4 +1,5 @@
 import { v2 as cloudinary } from "cloudinary"
+import { ensureCloudinary } from "../config/cloudinary.js"
 import productModel from "../models/productModel.js"
 import userModel from "../models/userModel.js"
 
@@ -15,6 +16,9 @@ const addProduct = async (req, res) => {
         const image5 = req.files.image5 && req.files.image5[0]
 
         const images = [image1, image2, image3, image4, image5].filter((item) => item !== undefined)
+
+        // Guarantee Cloudinary is configured before any upload (serverless-safe).
+        if (images.length) ensureCloudinary()
 
         const productData = {
             name,

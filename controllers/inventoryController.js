@@ -244,13 +244,17 @@ export const renderBarcodeLabel = async (req, res) => {
         const H = barY + 66
         const imgW = W - pad * 2
 
+        // NOTE: `xmlns:xlink` + `xlink:href` (not bare `href`) is required so the
+        // embedded barcode renders when the downloaded .svg is opened outside a
+        // browser (macOS Preview, Illustrator, Inkscape, PDF converters, label apps).
         const svg =
-`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
+`<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
   <rect x="0.5" y="0.5" width="${W - 1}" height="${H - 1}" rx="10" fill="#ffffff" stroke="#e2e6ec"/>
   <text x="${pad}" y="22" font-family="Helvetica,Arial,sans-serif" font-size="13" font-weight="700" fill="#062B52">${xmlEsc(String(name).slice(0, 30))}</text>
-  ${hasVariant ? `<text x="${pad}" y="40" font-family="Helvetica,Arial,sans-serif" font-size="11" fill="#5b6b80">${xmlEsc(size)}${color ? ' · ' + xmlEsc(color) : ''}</text>` : ''}
+  ${hasVariant ? `<text x="${pad}" y="40" font-family="Helvetica,Arial,sans-serif" font-size="11" fill="#5b6b80">${xmlEsc(size)}${color ? ' &#183; ' + xmlEsc(color) : ''}</text>` : ''}
   <text x="${pad}" y="${hasVariant ? 58 : 42}" font-family="Helvetica,Arial,sans-serif" font-size="13" font-weight="700" fill="#0E4F86">Rs.${xmlEsc(price)}</text>
-  <image x="${pad}" y="${barY}" width="${imgW}" height="46" preserveAspectRatio="xMidYMid meet" href="data:image/png;base64,${b64}"/>
+  <image x="${pad}" y="${barY}" width="${imgW}" height="46" preserveAspectRatio="xMidYMid meet" xlink:href="data:image/png;base64,${b64}"/>
   <text x="${W - pad}" y="${H - 8}" text-anchor="end" font-family="Helvetica,Arial,sans-serif" font-size="9" fill="#94a3b8">Stock: ${xmlEsc(stock)}</text>
 </svg>`
 
@@ -260,6 +264,63 @@ export const renderBarcodeLabel = async (req, res) => {
     } catch (error) {
         console.log(error)
         res.status(400).json({ success: false, message: error.message })
+    }
+}
+
+// GET /api/inventory/label-pdf/:sku?name=&price=&size=&color=&stock=
+// A single printable barcode label as a PDF — the most portable format for
+// downloading/printing (opens & prints correctly in every OS and label app).
+export const renderBarcodeLabelPdf = async (req, res) => {
+    try {
+        const { sku } = req.params
+        let { name = '', price = '', size = '', color = '', stock = '' } = req.query
+
+        if (!name) {
+            const p = await productModel.findOne({ 'variants.sku': sku }).lean()
+            if (p) {
+                name = p.name; price = price || p.price
+                const v = (p.variants || []).find(v => v.sku === sku)
+                if (v) { size = size || v.size; color = color || v.color; stock = stock === '' ? v.stock : stock }
+            }
+        }
+
+        const png = await bwipjs.toBuffer({
+            bcid: 'code128', text: sku, scale: 3, height: 12,
+            includetext: true, textxalign: 'center', textsize: 9,
+        })
+
+        res.setHeader('Content-Type', 'application/pdf')
+        res.setHeader('Content-Disposition', `attachment; filename="${sku}.pdf"`)
+
+        // A compact 60mm × 40mm label (points: 1mm ≈ 2.83465pt)
+        const W = 170, H = 113
+        const doc = new PDFDocument({ size: [W, H], margin: 8 })
+        doc.pipe(res)
+
+        const pad = 8
+        const innerW = W - pad * 2
+        doc.roundedRect(2, 2, W - 4, H - 4, 6).lineWidth(0.7).strokeColor('#e2e6ec').stroke()
+        doc.fillColor('#062B52').font('Helvetica-Bold').fontSize(9)
+            .text(String(name).slice(0, 30) || sku, pad, pad, { width: innerW, height: 22, ellipsis: true })
+        const hasVariant = size && size !== '—'
+        let cy = pad + 14
+        if (hasVariant) {
+            doc.fillColor('#5b6b80').font('Helvetica').fontSize(7.5)
+                .text(`${size}${color ? ' · ' + color : ''}`, pad, cy, { width: innerW })
+            cy += 11
+        }
+        doc.fillColor('#0E4F86').font('Helvetica-Bold').fontSize(9)
+            .text(`Rs.${price}`, pad, cy, { width: innerW })
+        try {
+            doc.image(png, pad, cy + 12, { width: innerW, height: 40, fit: [innerW, 40], align: 'center' })
+        } catch { /* skip bad image */ }
+        doc.fillColor('#94a3b8').font('Helvetica').fontSize(6.5)
+            .text(`Stock: ${stock}`, pad, H - pad - 8, { width: innerW, align: 'right' })
+
+        doc.end()
+    } catch (error) {
+        console.log(error)
+        if (!res.headersSent) res.status(400).json({ success: false, message: error.message })
     }
 }
 
