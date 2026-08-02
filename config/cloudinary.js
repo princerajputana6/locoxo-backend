@@ -15,18 +15,31 @@ let configured = false
 // Safe to call on every request — configuring is cheap and this removes any
 // dependency on module-load ordering / serverless cold-start timing (the usual
 // cause of "Must supply api_key" on Vercel).
+const envName = (k) =>
+    k === 'cloud_name' ? 'CLOUDINARY_NAME' : k === 'api_key' ? 'CLOUDINARY_API_KEY' : 'CLOUDINARY_SECRET_KEY'
+
+// A value that's still a template placeholder ("Paste Cloudinary API key here",
+// "your-key", "xxxx", "----") is worse than missing — it looks set but Cloudinary
+// rejects it with "Unknown API key". Catch those explicitly.
+const looksLikePlaceholder = (v) =>
+    /paste|your[-_ ]?|here|xxxx|example|placeholder|----|<.*>/i.test(String(v))
+
 export const ensureCloudinary = () => {
     const cfg = readEnv()
 
-    const missing = Object.entries(cfg)
-        .filter(([, v]) => !v)
-        .map(([k]) => k)
-
+    const missing = Object.entries(cfg).filter(([, v]) => !v).map(([k]) => envName(k))
     if (missing.length) {
         throw new Error(
-            `Cloudinary is not configured — missing env var(s): ${missing
-                .map((k) => (k === 'cloud_name' ? 'CLOUDINARY_NAME' : k === 'api_key' ? 'CLOUDINARY_API_KEY' : 'CLOUDINARY_SECRET_KEY'))
-                .join(', ')}. Add them to your deployment environment and redeploy.`
+            `Cloudinary is not configured — missing env var(s): ${missing.join(', ')}. ` +
+            `Set them on the BACKEND deployment (the service that runs server.js), then redeploy.`
+        )
+    }
+
+    const placeholders = Object.entries(cfg).filter(([, v]) => looksLikePlaceholder(v)).map(([k]) => envName(k))
+    if (placeholders.length) {
+        throw new Error(
+            `Cloudinary env var(s) still contain placeholder text: ${placeholders.join(', ')}. ` +
+            `Replace with the real value from your Cloudinary dashboard (Settings → API Keys) on the BACKEND deployment, then redeploy.`
         )
     }
 
