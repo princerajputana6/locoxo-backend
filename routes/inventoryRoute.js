@@ -12,6 +12,7 @@ import {
     renderBarcodeLabelPdf
 } from '../controllers/inventoryController.js'
 import adminAuth from '../middleware/adminAuth.js'
+import upload from '../middleware/multer.js'
 
 const inventoryRouter = express.Router()
 
@@ -23,7 +24,9 @@ inventoryRouter.get('/label/:sku', renderBarcodeLabel)
 inventoryRouter.get('/label-pdf/:sku', renderBarcodeLabelPdf)
 
 // Bulk add products (SKU + barcode auto-generated per variant) + barcode PDF export
-inventoryRouter.post('/bulk-add', adminAuth, bulkAddProducts)
+// upload.any() accepts optional per-row image files (image_0, image_1, …).
+// Works fine with a plain JSON body too (no files → req.files is empty).
+inventoryRouter.post('/bulk-add', adminAuth, upload.any(), bulkAddProducts)
 inventoryRouter.get('/barcodes/pdf', adminAuth, barcodeSheetPdf)
 
 inventoryRouter.get('/summary', adminAuth, inventorySummary)

@@ -1,18 +1,36 @@
 import bwipjs from 'bwip-js'
 import PDFDocument from 'pdfkit'
+import { v2 as cloudinary } from 'cloudinary'
+import { ensureCloudinary } from '../config/cloudinary.js'
 import productModel from '../models/productModel.js'
 
 const PLACEHOLDER_IMG = 'https://placehold.co/600x800/0E4F86/FFFFFF?text=LOCOXO'
 
-// POST /api/inventory/bulk-add   body: { products: [...] }
-// Creates multiple products at once. SKU + barcode are auto-generated per
-// variant by the productModel pre-save hook.
+// POST /api/inventory/bulk-add
+// Accepts EITHER a JSON body { products: [...] } (no images) OR multipart/form-data
+// with a `products` JSON string field plus optional per-row image files named
+// `image_0`, `image_1`, … (row index). Creates multiple products at once; SKU +
+// barcode are auto-generated per variant by the productModel pre-save hook.
 export const bulkAddProducts = async (req, res) => {
     try {
-        const { products } = req.body
+        // `products` arrives as a JSON string under multipart, or an array under JSON.
+        let products = req.body.products
+        if (typeof products === 'string') {
+            try { products = JSON.parse(products) } catch { products = null }
+        }
         if (!Array.isArray(products) || products.length === 0) {
             return res.json({ success: false, message: 'No products provided' })
         }
+
+        // Map uploaded files by row index: fieldname `image_<i>`.
+        const filesByRow = {}
+        for (const f of (req.files || [])) {
+            const m = /^image_(\d+)$/.exec(f.fieldname)
+            if (m) filesByRow[Number(m[1])] = f
+        }
+
+        // Configure Cloudinary once up front if any images were uploaded.
+        if (Object.keys(filesByRow).length) ensureCloudinary()
 
         const created = []
         const errors = []
@@ -33,6 +51,19 @@ export const bulkAddProducts = async (req, res) => {
                     ? p.sizes
                     : [...new Set(variants.map((v) => v.size))]
 
+                // Resolve image: uploaded file → Cloudinary; else a URL passed in the
+                // row; else the placeholder.
+                let image = [PLACEHOLDER_IMG]
+                const file = filesByRow[i]
+                if (file) {
+                    const up = await cloudinary.uploader.upload(file.path, { resource_type: 'image', folder: 'locoxo/products' })
+                    image = [up.secure_url]
+                } else if (Array.isArray(p.image) && p.image.length) {
+                    image = p.image
+                } else if (typeof p.image === 'string' && p.image.trim()) {
+                    image = [p.image.trim()]
+                }
+
                 const doc = new productModel({
                     name: p.name,
                     description: p.description || p.name,
@@ -43,7 +74,7 @@ export const bulkAddProducts = async (req, res) => {
                     sizes,
                     variants,
                     brand: p.brand || 'LOCOXO',
-                    image: Array.isArray(p.image) && p.image.length ? p.image : [PLACEHOLDER_IMG],
+                    image,
                     status: p.status || 'active',
                     lowStockThreshold: p.lowStockThreshold ?? 5,
                     date: Date.now(),
