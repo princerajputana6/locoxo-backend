@@ -5,6 +5,7 @@ import 'dotenv/config'
 import { initRealtime } from './realtime.js'
 import connectDB from './config/mongodb.js'
 import connectCloudinary from './config/cloudinary.js'
+import { MAX_IMAGE_MB } from './middleware/multer.js'
 import userRouter from './routes/userRoute.js'
 import productRouter from './routes/productRoute.js'
 import cartRouter from './routes/cartRoute.js'
@@ -119,6 +120,16 @@ app.use('/api/ai',aiRouter)
 
 app.get('/',(req,res)=>{
     res.send("API Working")
+})
+
+// JSON error handler — turns upload errors (multer file-size / wrong-type) and
+// other thrown errors into a clean { success:false, message } the UI can show.
+app.use((err, req, res, next) => {
+    if (!err) return next()
+    let message = err.message || 'Server error'
+    if (err.code === 'LIMIT_FILE_SIZE') message = `Image too large — max ${MAX_IMAGE_MB}MB per image`
+    console.log('Request error:', message)
+    res.status(400).json({ success: false, message })
 })
 
 const httpServer = http.createServer(app)
