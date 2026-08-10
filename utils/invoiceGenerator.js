@@ -1,155 +1,269 @@
 import PDFDocument from 'pdfkit';
-import QRCode from 'qrcode';
+import bwipjs from 'bwip-js';
 import fs from 'fs';
 import path from 'path';
+import company from '../config/company.js';
+import { rupeesInWords } from './numberToWords.js';
+
+// Best-effort enrichment: pull the shipment (AWB / courier) and each line's
+// product code + HSN. Never throws — the invoice renders regardless.
+const enrich = async (order) => {
+    const out = { awb: '', courier: '', codes: {} };
+    try {
+        const shipmentModel = (await import('../models/shipmentModel.js')).default;
+        const s = await shipmentModel.findOne({ orderId: order._id }).lean();
+        if (s) { out.awb = s.awb || ''; out.courier = s.provider || ''; }
+    } catch { /* ignore */ }
+    try {
+        const productModel = (await import('../models/productModel.js')).default;
+        const ids = (order.items || []).map((i) => i.productId).filter(Boolean);
+        if (ids.length) {
+            const prods = await productModel.find({ _id: { $in: ids } }, 'productCode').lean();
+            prods.forEach((p) => { out.codes[String(p._id)] = p.productCode; });
+        }
+    } catch { /* ignore */ }
+    return out;
+};
+
+const money = (n) => Number(n || 0).toFixed(2);
+const fmtDate = (d) => new Date(d || Date.now()).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
 
 const generateInvoice = async (orderData) => {
-    return new Promise(async (resolve, reject) => {
+    // Work on a plain object whether a mongoose doc or literal is passed.
+    const order = typeof orderData?.toObject === 'function' ? orderData.toObject() : { ...orderData };
+    const meta = await enrich(order);
+
+    const invoicesDir = path.join(process.cwd(), 'invoices');
+    if (!fs.existsSync(invoicesDir)) fs.mkdirSync(invoicesDir, { recursive: true });
+    const invoicePath = path.join(invoicesDir, `invoice-${order.orderNumber}.pdf`);
+
+    // Pre-render the order-number barcode (Code-128).
+    let orderBarcode = null;
+    try {
+        orderBarcode = await bwipjs.toBuffer({ bcid: 'code128', text: String(order.orderNumber), scale: 2, height: 8, includetext: true, textsize: 7, textxalign: 'center' });
+    } catch { /* skip */ }
+    let awbBarcode = null;
+    if (meta.awb) {
+        try { awbBarcode = await bwipjs.toBuffer({ bcid: 'code128', text: String(meta.awb), scale: 2, height: 8, includetext: true, textsize: 7, textxalign: 'center' }); } catch { /* skip */ }
+    }
+
+    // Tax model: intra-state (buyer state == seller state) → CGST+SGST, else IGST.
+    const buyerState = (order.address?.state || '').trim().toLowerCase();
+    const sellerState = (company.address.state || '').trim().toLowerCase();
+    const isIntraState = buyerState && buyerState === sellerState;
+    const rate = company.gstRate; // %
+
+    // Per-line GST breakdown from the tax-inclusive selling price.
+    const lines = (order.items || []).map((it, idx) => {
+        const gross = Number(it.price || 0) * Number(it.quantity || 1);   // tax-inclusive amount
+        const taxable = gross / (1 + rate / 100);
+        const tax = gross - taxable;
+        const unitTaxable = taxable / Number(it.quantity || 1);
+        return {
+            sr: idx + 1,
+            name: it.name || '',
+            code: meta.codes[String(it.productId)] || '',
+            size: it.size, color: it.color,
+            qty: Number(it.quantity || 1),
+            rate: unitTaxable,       // pre-tax unit rate
+            discount: 0,
+            taxable, tax, amount: gross,
+        };
+    });
+
+    const totals = lines.reduce((a, l) => ({
+        qty: a.qty + l.qty, taxable: a.taxable + l.taxable, tax: a.tax + l.tax, amount: a.amount + l.amount,
+    }), { qty: 0, taxable: 0, tax: 0, amount: 0 });
+
+    return new Promise((resolve, reject) => {
         try {
-            // Create invoices directory if it doesn't exist
-            const invoicesDir = path.join(process.cwd(), 'invoices');
-            if (!fs.existsSync(invoicesDir)) {
-                fs.mkdirSync(invoicesDir, { recursive: true });
-            }
-
-            const invoicePath = path.join(invoicesDir, `invoice-${orderData.orderNumber}.pdf`);
-            const doc = new PDFDocument({ margin: 50 });
+            const doc = new PDFDocument({ size: 'A4', margin: 24 });
             const stream = fs.createWriteStream(invoicePath);
-
             doc.pipe(stream);
 
-            // Generate QR Code with complete order information
-            const qrCodeData = JSON.stringify({
-                orderNumber: orderData.orderNumber,
-                orderDate: new Date(orderData.date).toLocaleDateString(),
-                paymentMethod: orderData.paymentMethod,
-                paymentStatus: orderData.payment ? 'Paid' : 'Pending',
-                customer: {
-                    name: `${orderData.address.firstName} ${orderData.address.lastName}`,
-                    email: orderData.address.email,
-                    phone: orderData.address.phone
-                },
-                items: orderData.items.map(item => ({
-                    name: item.name,
-                    size: item.size,
-                    quantity: item.quantity,
-                    price: item.price
-                })),
-                pricing: {
-                    subtotal: orderData.subtotal || orderData.amount,
-                    shipping: orderData.shippingCharge || 0,
-                    total: orderData.amount
-                },
-                verificationUrl: `https://locoxo.com/verify-order/${orderData.orderNumber}`
-            });
-            const qrCodeImage = await QRCode.toDataURL(qrCodeData);
+            const L = 24, R = 571;                 // page content bounds (A4 width 595)
+            const W = R - L;
+            const box = (x, y, w, h) => doc.rect(x, y, w, h).lineWidth(0.6).strokeColor('#333').stroke();
+            const label = (t, x, y, w) => doc.font('Helvetica').fontSize(6.5).fillColor('#666').text(t, x + 3, y + 2, { width: (w || 100) - 6 });
+            const value = (t, x, y, w, opt = {}) => doc.font(opt.bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(opt.size || 8).fillColor('#111').text(String(t ?? ''), x + 3, y + 9, { width: (w || 100) - 6, ...opt });
 
-            // Logo and Header
+            // ── Header: logo + Tax Invoice title ────────────────────────────────
             const logoPath = path.join(process.cwd(), 'assets', 'logo.png');
-            if (fs.existsSync(logoPath)) {
-                doc.image(logoPath, 50, 45, { width: 60 });
-            }
-            
-            doc.fontSize(24).font('Helvetica-Bold').text('LOCOXO', 120, 50);
-            doc.fontSize(10).font('Helvetica').text('Premium Fashion Store', 120, 80);
-            doc.text('Mumbai, Maharashtra, India', 120, 95);
-            doc.text('Phone: +91-9876543210', 120, 110);
-            doc.text('Email: support@locoxo.com', 120, 125);
+            if (fs.existsSync(logoPath)) { try { doc.image(logoPath, L, 26, { width: 90 }); } catch { /* ignore */ } }
+            doc.font('Helvetica-Bold').fontSize(15).fillColor('#111').text('Tax Invoice', L, 30, { width: W, align: 'right' });
+            doc.font('Helvetica').fontSize(7).fillColor('#666').text('Original for Recipient', L, 48, { width: W, align: 'right' });
 
-            // Invoice Title
-            doc.fontSize(20).font('Helvetica-Bold').text('INVOICE', 400, 50);
-            doc.fontSize(10).font('Helvetica').text(`Invoice #: ${orderData.orderNumber}`, 400, 80);
-            doc.text(`Date: ${new Date(orderData.date).toLocaleDateString()}`, 400, 95);
-            doc.text(`Payment: ${orderData.paymentMethod}`, 400, 110);
+            let y = 66;
+            const colSellerW = W * 0.42, colMetaW = W * 0.33, colDateW = W - colSellerW - colMetaW;
+            const headerH = 92;
+            box(L, y, colSellerW, headerH);
+            box(L + colSellerW, y, colMetaW, headerH);
+            box(L + colSellerW + colMetaW, y, colDateW, headerH);
 
-            // QR Code
-            const qrBuffer = Buffer.from(qrCodeImage.split(',')[1], 'base64');
-            doc.image(qrBuffer, 450, 130, { width: 80 });
+            // Seller block
+            doc.font('Helvetica-Bold').fontSize(9).fillColor('#111').text(company.legalName, L + 4, y + 4, { width: colSellerW - 8 });
+            doc.font('Helvetica').fontSize(7).fillColor('#333');
+            const a = company.address;
+            doc.text(`${a.line1}${a.line2 ? ', ' + a.line2 : ''}`, L + 4, doc.y + 1, { width: colSellerW - 8 });
+            doc.text(`${a.city}, ${a.state} - ${a.pincode}, ${a.country}`, L + 4, doc.y + 1, { width: colSellerW - 8 });
+            doc.font('Helvetica-Bold').fontSize(7.5).fillColor('#111').text(`GSTIN: ${company.gstin}`, L + 4, doc.y + 3, { width: colSellerW - 8 });
+            doc.font('Helvetica').fontSize(7).fillColor('#333').text(`State: ${a.state}, Code: ${a.stateCode}`, L + 4, doc.y + 1, { width: colSellerW - 8 });
 
-            // Line separator
-            doc.moveTo(50, 230).lineTo(550, 230).stroke();
+            // Invoice meta block (middle)
+            const mx = L + colSellerW;
+            const paymentMode = (order.paymentMethod || '').toUpperCase() === 'COD' ? 'COD' : 'PREPAID';
+            let my = y + 3;
+            const metaRow = (k, v) => {
+                doc.font('Helvetica').fontSize(6.5).fillColor('#666').text(k, mx + 4, my, { width: colMetaW - 8 });
+                doc.font('Helvetica-Bold').fontSize(7.5).fillColor('#111').text(v, mx + 4, my + 7, { width: colMetaW - 8 });
+                my += 17;
+            };
+            metaRow('Invoice No', order.orderNumber);
+            metaRow('Order No', order.orderNumber);
+            metaRow('Order Date', fmtDate(order.date || order.createdAt));
 
-            // Bill To
-            doc.fontSize(12).font('Helvetica-Bold').text('BILL TO:', 50, 250);
-            doc.fontSize(10).font('Helvetica')
-                .text(`${orderData.address.firstName} ${orderData.address.lastName}`, 50, 270)
-                .text(`${orderData.address.street}`, 50, 285)
-                .text(`${orderData.address.city}, ${orderData.address.state} - ${orderData.address.zipcode}`, 50, 300)
-                .text(`Phone: ${orderData.address.phone}`, 50, 315)
-                .text(`Email: ${orderData.address.email}`, 50, 330);
+            // Date block (right)
+            const dx = L + colSellerW + colMetaW;
+            let dy = y + 3;
+            const dateRow = (k, v) => {
+                doc.font('Helvetica').fontSize(6.5).fillColor('#666').text(k, dx + 4, dy, { width: colDateW - 8 });
+                doc.font('Helvetica-Bold').fontSize(7.5).fillColor('#111').text(v, dx + 4, dy + 7, { width: colDateW - 8 });
+                dy += 17;
+            };
+            dateRow('Invoice Date', fmtDate(order.date || order.createdAt));
+            dateRow('Portal', company.brand);
+            dateRow('Payment Mode', paymentMode);
 
-            // Items Table Header
-            const tableTop = 370;
-            doc.fontSize(10).font('Helvetica-Bold');
-            doc.text('Item', 50, tableTop);
-            doc.text('Size', 250, tableTop);
-            doc.text('Qty', 320, tableTop);
-            doc.text('Price', 380, tableTop);
-            doc.text('Total', 480, tableTop);
+            // ── Bill To / Ship To / Dispatch ────────────────────────────────────
+            y += headerH;
+            const partyH = 78;
+            const p1 = W * 0.35, p2 = W * 0.35, p3 = W - p1 - p2;
+            box(L, y, p1, partyH);
+            box(L + p1, y, p2, partyH);
+            box(L + p1 + p2, y, p3, partyH);
 
-            // Line under header
-            doc.moveTo(50, tableTop + 15).lineTo(550, tableTop + 15).stroke();
+            const ad = order.address || {};
+            const addrLines = [
+                ad.name,
+                [ad.addressLine1, ad.addressLine2].filter(Boolean).join(', '),
+                `${ad.city || ''}${ad.state ? ', ' + ad.state : ''}${ad.pincode ? ' - ' + ad.pincode : ''}`,
+                ad.country || 'India',
+                ad.phone ? `Ph: ${ad.phone}` : '',
+            ].filter(Boolean);
 
-            // Items
-            let yPosition = tableTop + 30;
-            doc.font('Helvetica');
+            const party = (title, x, w) => {
+                doc.font('Helvetica-Bold').fontSize(7.5).fillColor('#111').text(title, x + 4, y + 4, { width: w - 8 });
+                doc.font('Helvetica').fontSize(7).fillColor('#333');
+                let py = y + 15;
+                addrLines.forEach((ln) => { doc.text(ln, x + 4, py, { width: w - 8 }); py = doc.y + 1; });
+            };
+            party('Bill To', L, p1);
+            party('Ship To', L + p1, p2);
 
-            orderData.items.forEach((item) => {
-                const itemTotal = item.price * item.quantity;
-                
-                doc.text(item.name.substring(0, 30), 50, yPosition, { width: 180 });
-                doc.text(item.size, 250, yPosition);
-                doc.text(item.quantity.toString(), 320, yPosition);
-                doc.text(`₹${item.price}`, 380, yPosition);
-                doc.text(`₹${itemTotal}`, 480, yPosition);
-                
-                yPosition += 25;
+            // Dispatch block
+            const ex = L + p1 + p2;
+            doc.font('Helvetica').fontSize(6.5).fillColor('#666').text('Dispatch Through', ex + 4, y + 4, { width: p3 - 8 });
+            doc.font('Helvetica-Bold').fontSize(8).fillColor('#111').text(meta.courier ? meta.courier.toUpperCase() : '—', ex + 4, y + 12, { width: p3 - 8 });
+            doc.font('Helvetica').fontSize(6.5).fillColor('#666').text('AWB No', ex + 4, y + 26, { width: p3 - 8 });
+            doc.font('Helvetica-Bold').fontSize(8).fillColor('#111').text(meta.awb || '—', ex + 4, y + 34, { width: p3 - 8 });
+            if (awbBarcode) { try { doc.image(awbBarcode, ex + 4, y + 46, { width: p3 - 8, height: 26 }); } catch { /* ignore */ } }
+            else if (orderBarcode) { try { doc.image(orderBarcode, ex + 4, y + 46, { width: p3 - 8, height: 26 }); } catch { /* ignore */ } }
+
+            // ── Items table ─────────────────────────────────────────────────────
+            y += partyH;
+            const taxLabel = isIntraState ? `CGST+SGST` : `IGST`;
+            // column x positions and widths
+            const cols = [
+                { key: 'sr', label: 'Sr', w: 22, align: 'center' },
+                { key: 'name', label: 'Product Name', w: 150, align: 'left' },
+                { key: 'code', label: 'Product Code', w: 92, align: 'left' },
+                { key: 'qty', label: 'Qty', w: 28, align: 'center' },
+                { key: 'rate', label: 'Rate', w: 55, align: 'right' },
+                { key: 'discount', label: 'Discount', w: 50, align: 'right' },
+                { key: 'taxable', label: 'Taxable\nValue', w: 60, align: 'right' },
+                { key: 'tax', label: `${taxLabel}\n(${rate}%)`, w: 55, align: 'right' },
+                { key: 'amount', label: 'Amount', w: W - (22 + 150 + 92 + 28 + 55 + 50 + 60 + 55), align: 'right' },
+            ];
+            const colX = [];
+            let cx = L;
+            cols.forEach((c) => { colX.push(cx); cx += c.w; });
+
+            // header row
+            const thH = 22;
+            doc.rect(L, y, W, thH).fillColor('#f0f0f0').fill();
+            doc.strokeColor('#333').lineWidth(0.6);
+            cols.forEach((c, i) => {
+                doc.rect(colX[i], y, c.w, thH).stroke();
+                doc.font('Helvetica-Bold').fontSize(6.8).fillColor('#111').text(c.label, colX[i] + 2, y + 4, { width: c.w - 4, align: c.align });
+            });
+            y += thH;
+
+            // body rows
+            doc.font('Helvetica').fontSize(7.5).fillColor('#111');
+            lines.forEach((l) => {
+                const nameH = doc.heightOfString(l.name, { width: cols[1].w - 4, fontSize: 7.5 });
+                const rowH = Math.max(24, nameH + 14);
+                cols.forEach((c, i) => { doc.rect(colX[i], y, c.w, rowH).lineWidth(0.5).strokeColor('#999').stroke(); });
+                doc.fillColor('#111').font('Helvetica').fontSize(7.5);
+                doc.text(String(l.sr), colX[0] + 2, y + 5, { width: cols[0].w - 4, align: 'center' });
+                doc.text(l.name, colX[1] + 2, y + 4, { width: cols[1].w - 4 });
+                doc.fillColor('#333').fontSize(7).text(l.code || '—', colX[2] + 2, y + 4, { width: cols[2].w - 4 });
+                doc.fontSize(6.3).fillColor('#666').text(`HSN: ${company.hsnCode}`, colX[2] + 2, y + 13, { width: cols[2].w - 4 });
+                if (l.size || l.color) doc.fontSize(6.3).fillColor('#666').text([l.size, l.color].filter(Boolean).join(' · '), colX[1] + 2, y + 4 + nameH, { width: cols[1].w - 4 });
+                doc.fillColor('#111').fontSize(7.5);
+                doc.text(String(l.qty), colX[3] + 2, y + 5, { width: cols[3].w - 4, align: 'center' });
+                doc.text(money(l.rate), colX[4] + 2, y + 5, { width: cols[4].w - 4, align: 'right' });
+                doc.text(money(l.discount), colX[5] + 2, y + 5, { width: cols[5].w - 4, align: 'right' });
+                doc.text(money(l.taxable), colX[6] + 2, y + 5, { width: cols[6].w - 4, align: 'right' });
+                doc.text(money(l.tax), colX[7] + 2, y + 5, { width: cols[7].w - 4, align: 'right' });
+                doc.text(money(l.amount), colX[8] + 2, y + 5, { width: cols[8].w - 4, align: 'right' });
+                y += rowH;
             });
 
-            // Line before totals
-            yPosition += 10;
-            doc.moveTo(50, yPosition).lineTo(550, yPosition).stroke();
+            // totals row
+            const totH = 20;
+            doc.rect(L, y, W, totH).lineWidth(0.6).strokeColor('#333').stroke();
+            doc.font('Helvetica-Bold').fontSize(8).fillColor('#111');
+            doc.text('Total', colX[1] + 2, y + 6, { width: cols[1].w - 4 });
+            doc.text(String(totals.qty), colX[3] + 2, y + 6, { width: cols[3].w - 4, align: 'center' });
+            doc.text(money(totals.taxable), colX[6] + 2, y + 6, { width: cols[6].w - 4, align: 'right' });
+            doc.text(money(totals.tax), colX[7] + 2, y + 6, { width: cols[7].w - 4, align: 'right' });
+            doc.text(money(totals.amount), colX[8] + 2, y + 6, { width: cols[8].w - 4, align: 'right' });
+            y += totH + 6;
 
-            // Totals
-            yPosition += 20;
-            doc.font('Helvetica');
-            doc.text('Subtotal:', 380, yPosition);
-            doc.text(`₹${orderData.subtotal || orderData.amount}`, 480, yPosition);
+            // ── Amount in words + reverse charge ────────────────────────────────
+            doc.font('Helvetica-Bold').fontSize(8).fillColor('#111').text('Amount Chargeable (in words)', L, y);
+            doc.font('Helvetica').fontSize(8.5).fillColor('#111').text(rupeesInWords(totals.amount), L, doc.y + 1, { width: W * 0.62 });
+            const taxSplit = isIntraState
+                ? `CGST @${rate / 2}%: ${money(totals.tax / 2)}   SGST @${rate / 2}%: ${money(totals.tax / 2)}`
+                : `IGST @${rate}%: ${money(totals.tax)}`;
+            doc.font('Helvetica').fontSize(7.5).fillColor('#333').text(taxSplit, L, doc.y + 3, { width: W });
+            doc.font('Helvetica-Bold').fontSize(7.5).fillColor('#111').text('Tax is payable on reverse charge basis: No', L, doc.y + 3);
 
-            yPosition += 20;
-            doc.text('Shipping:', 380, yPosition);
-            doc.text(`₹${orderData.shippingCharge || 0}`, 480, yPosition);
+            // ── Declaration + signatory ─────────────────────────────────────────
+            y = doc.y + 12;
+            const decW = W * 0.6;
+            doc.font('Helvetica-Bold').fontSize(7.5).fillColor('#111').text('Declaration', L, y);
+            doc.font('Helvetica').fontSize(6.8).fillColor('#444').text(
+                '1. This is a computer generated invoice and does not require signature or stamp. ' +
+                '2. All figures are in INR. 3. Shipping / handling charges are inclusive of GST. ' +
+                `4. All disputes are subject to ${company.address.city} (${company.address.stateCode}) jurisdiction only.`,
+                L, doc.y + 2, { width: decW });
 
-            yPosition += 20;
-            doc.fontSize(12).font('Helvetica-Bold');
-            doc.text('Total Amount:', 380, yPosition);
-            doc.text(`₹${orderData.amount}`, 480, yPosition);
+            const sigX = L + decW + 10, sigW = R - sigX;
+            doc.font('Helvetica-Bold').fontSize(8).fillColor('#111').text(`For ${company.legalName}`, sigX, y, { width: sigW, align: 'right' });
+            doc.font('Helvetica').fontSize(7.5).fillColor('#333').text('Authorised Signatory', sigX, y + 44, { width: sigW, align: 'right' });
 
-            // Footer
-            doc.fontSize(8).font('Helvetica').text(
-                'Thank you for shopping with LOCOXO! For any queries, contact us at support@locoxo.com',
-                50,
-                yPosition + 80,
-                { align: 'center', width: 500 }
-            );
-
-            doc.fontSize(8).text(
-                'This is a computer-generated invoice and does not require a signature.',
-                50,
-                yPosition + 100,
-                { align: 'center', width: 500 }
-            );
+            // ── Footer ──────────────────────────────────────────────────────────
+            const fy = 800;
+            doc.moveTo(L, fy).lineTo(R, fy).lineWidth(0.5).strokeColor('#999').stroke();
+            doc.font('Helvetica').fontSize(6.8).fillColor('#666')
+                .text('This is a computer generated invoice.', L, fy + 4, { width: W / 2 });
+            doc.text(`Powered By ${company.poweredBy}  ·  ${company.website}  ·  ${company.care.email}`, L + W / 2, fy + 4, { width: W / 2, align: 'right' });
 
             doc.end();
-
-            stream.on('finish', () => {
-                resolve(invoicePath);
-            });
-
-            stream.on('error', (error) => {
-                reject(error);
-            });
-
+            stream.on('finish', () => resolve(invoicePath));
+            stream.on('error', reject);
         } catch (error) {
             reject(error);
         }

@@ -1,7 +1,7 @@
 import mongoose from 'mongoose'
 
 const orderSchema = new mongoose.Schema({
-    userId: { type: mongoose.Schema.Types.ObjectId, ref: 'user', required: true },
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: 'user' }, // optional — manual admin orders may have no account
     orderNumber: { type: String, required: true, unique: true },
     
     items: [{
@@ -34,14 +34,47 @@ const orderSchema = new mongoose.Schema({
         country: { type: String, default: 'India' }
     },
     
-    status: { 
-        type: String, 
-        enum: ['Order Placed', 'Processing', 'Shipped', 'Out for Delivery', 'Delivered', 'Cancelled', 'Returned', 'Refunded'],
-        default: 'Order Placed' 
+    // Superset of the admin workflow (Pending→Confirmed→Packed→Pickuped→Delivered,
+    // plus Cancelled/Returned) AND the legacy statuses the storefront still reads.
+    status: {
+        type: String,
+        enum: [
+            'Pending', 'Confirmed', 'Packed', 'Pickuped', 'Delivered', 'Cancelled', 'Returned', 'Refunded',
+            'Order Placed', 'Processing', 'Packing', 'Shipped', 'Out for delivery', 'Out for Delivery',
+        ],
+        default: 'Pending'
     },
-    
+    statusHistory: [{
+        status: { type: String },
+        at: { type: Date, default: Date.now },
+        by: { type: String },
+        note: { type: String },
+    }],
+
+    // Free-form order notes (admin).
+    orderNotes: [{
+        note: { type: String },
+        by: { type: String },
+        at: { type: Date, default: Date.now },
+    }],
+
+    // Pickup / dispatch details captured at the Pickuped stage.
+    delivery: {
+        partnerName: { type: String },      // delivery partner / person
+        courierName: { type: String },      // courier company
+        shipmentId: { type: String },       // AWB / shipment id
+        weight: { type: String },
+        dimensions: { type: String },
+    },
+
+    // Set once the Packed stage has decremented variant stock, to prevent double
+    // deduction if the status is toggled.
+    inventoryReduced: { type: Boolean, default: false },
+    isManual: { type: Boolean, default: false },   // created by admin
+    customerId: { type: String },                  // denormalised display id
+
     trackingNumber: { type: String },
-    
+
     paymentMethod: { type: String, required: true },
     payment: { type: Boolean, required: true, default: false },
     paymentId: { type: String },

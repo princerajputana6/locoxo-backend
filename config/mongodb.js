@@ -6,7 +6,10 @@ const connectDB = async () => {
         console.log("DB Connected");
     })
 
-    await mongoose.connect(`${process.env.MONGODB_URI}locoxo`)
+    // Use the URI as-is and select the DB via the dbName option. Concatenating
+    // the DB name onto the URI breaks when the URI carries a query string
+    // (e.g. "…?w=majority" would become "…w=majoritylocoxo").
+    await mongoose.connect(process.env.MONGODB_URI, { dbName: 'locoxo' })
 
 }
 

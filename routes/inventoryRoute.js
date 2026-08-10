@@ -9,7 +9,13 @@ import {
     bulkAddProducts,
     barcodeSheetPdf,
     renderBarcodeLabel,
-    renderBarcodeLabelPdf
+    renderBarcodeLabelPdf,
+    nextProductCode,
+    restockVariant,
+    adjustVariant,
+    stockHistory,
+    inventoryProductDetail,
+    renderPriceTag
 } from '../controllers/inventoryController.js'
 import adminAuth from '../middleware/adminAuth.js'
 import upload from '../middleware/multer.js'
@@ -22,6 +28,8 @@ inventoryRouter.get('/barcode/:sku', renderBarcode)
 inventoryRouter.get('/label/:sku', renderBarcodeLabel)
 // Same label as a printable PDF (most portable format for download/print)
 inventoryRouter.get('/label-pdf/:sku', renderBarcodeLabelPdf)
+// Legal apparel price tag (PDF) — the full garment tag with MRP, mfg details, EAN-13
+inventoryRouter.get('/pricetag/:sku', renderPriceTag)
 
 // Bulk add products (SKU + barcode auto-generated per variant) + barcode PDF export
 // upload.any() accepts optional per-row image files (image_0, image_1, …).
@@ -34,5 +42,12 @@ inventoryRouter.get('/low-stock', adminAuth, listLowStock)
 inventoryRouter.put('/clearance/:id', adminAuth, updateClearance)
 inventoryRouter.put('/threshold/:id', adminAuth, updateThreshold)
 inventoryRouter.post('/backfill-skus', adminAuth, backfillSkus)
+
+// Product code preview, restock / stock adjustment + history, dashboard detail
+inventoryRouter.get('/next-code', adminAuth, nextProductCode)
+inventoryRouter.post('/restock/:id', adminAuth, restockVariant)
+inventoryRouter.post('/adjust/:id', adminAuth, adjustVariant)
+inventoryRouter.get('/history', adminAuth, stockHistory)
+inventoryRouter.get('/product/:id', adminAuth, inventoryProductDetail)
 
 export default inventoryRouter

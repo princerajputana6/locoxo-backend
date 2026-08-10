@@ -1,11 +1,38 @@
 import orderModel from "../models/orderModel.js";
 import userModel from "../models/userModel.js";
 import influencerModel from "../models/influencerModel.js";
+import productModel from "../models/productModel.js";
+import stockAdjustmentModel from "../models/stockAdjustmentModel.js";
 import Stripe from 'stripe'
 import razorpay from 'razorpay'
 import generateInvoice from '../utils/invoiceGenerator.js';
 import fs from 'fs';
 import { createOrder as createCashfreeOrder, getOrderStatus as getCashfreeStatus } from '../services/cashfreeService.js';
+import { generateOrderNumber, customerIdFor } from '../utils/orderNumber.js';
+
+// Decrement variant stock for every line of an order and log a 'sale' adjustment.
+// Runs once per order (guarded by order.inventoryReduced by the caller).
+const reduceInventoryForOrder = async (order, adminEmail) => {
+    for (const it of (order.items || [])) {
+        try {
+            const product = await productModel.findById(it.productId)
+            if (!product) continue
+            const variant = (product.variants || []).find(
+                (v) => v.size === it.size && (v.color === it.color || !it.color)
+            ) || (product.variants || [])[0]
+            if (!variant) continue
+            const before = variant.stock || 0
+            variant.stock = Math.max(0, before - (it.quantity || 1))
+            await product.save()
+            await stockAdjustmentModel.create({
+                productId: product._id, productCode: product.productCode, productName: product.name,
+                sku: variant.sku, size: variant.size, color: variant.color,
+                type: 'sale', qtyChange: variant.stock - before, stockBefore: before, stockAfter: variant.stock,
+                reason: `Order ${order.orderNumber} packed`, admin: adminEmail || 'admin',
+            })
+        } catch (err) { console.log('inventory reduce error:', err.message) }
+    }
+}
 
 // global variables
 const currency = 'inr'
@@ -47,13 +74,28 @@ const applyReferralReward = async (userId) => {
     }
 };
 
-// gateway initialize
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY)
+// gateway initialize — lazy so the server still boots when a gateway's keys
+// aren't configured (only the endpoints that use that gateway will error).
+let _stripe = null
+const stripe = () => {
+    if (!_stripe) {
+        if (!process.env.STRIPE_SECRET_KEY) throw new Error('Stripe not configured')
+        _stripe = new Stripe(process.env.STRIPE_SECRET_KEY)
+    }
+    return _stripe
+}
 
-const razorpayInstance = new razorpay({
-    key_id : process.env.RAZORPAY_KEY_ID,
-    key_secret : process.env.RAZORPAY_KEY_SECRET,
-})
+let _razorpayInstance = null
+const razorpayInstance = () => {
+    if (!_razorpayInstance) {
+        if (!process.env.RAZORPAY_KEY_ID) throw new Error('Razorpay not configured')
+        _razorpayInstance = new razorpay({
+            key_id: process.env.RAZORPAY_KEY_ID,
+            key_secret: process.env.RAZORPAY_KEY_SECRET,
+        })
+    }
+    return _razorpayInstance
+}
 
 // Placing orders using COD Method
 const placeOrder = async (req,res) => {
@@ -169,7 +211,7 @@ const placeOrderStripe = async (req,res) => {
             quantity: 1
         })
 
-        const session = await stripe.checkout.sessions.create({
+        const session = await stripe().checkout.sessions.create({
             success_url: `${origin}/verify?success=true&orderId=${newOrder._id}`,
             cancel_url:  `${origin}/verify?success=false&orderId=${newOrder._id}`,
             line_items,
@@ -259,7 +301,7 @@ const placeOrderRazorpay = async (req,res) => {
             receipt : newOrder._id.toString()
         }
 
-        await razorpayInstance.orders.create(options, (error,order)=>{
+        await razorpayInstance().orders.create(options, (error,order)=>{
             if (error) {
                 console.log(error)
                 return res.json({success:false, message: error})
@@ -278,7 +320,7 @@ const verifyRazorpay = async (req,res) => {
         
         const { userId, razorpay_order_id  } = req.body
 
-        const orderInfo = await razorpayInstance.orders.fetch(razorpay_order_id)
+        const orderInfo = await razorpayInstance().orders.fetch(razorpay_order_id)
         if (orderInfo.status === 'paid') {
             const order = await orderModel.findByIdAndUpdate(orderInfo.receipt,{payment:true}, { new: true });
             await userModel.findByIdAndUpdate(req.body.userId,{cartData:{}})
@@ -398,17 +440,38 @@ const verifyCashfree = async (req,res) => {
 
 // All Orders data for Admin Panel
 const allOrders = async (req,res) => {
-
     try {
-        
-        const orders = await orderModel.find({})
-        res.json({success:true,orders})
+        const { search, status, from, to } = req.body || {}
+        const q = {}
+        if (status && status !== 'All') q.status = status
+        if (from || to) {
+            q.date = {}
+            if (from) q.date.$gte = new Date(from).getTime()
+            if (to) q.date.$lte = new Date(to).getTime() + 86400000 // inclusive of the 'to' day
+        }
 
+        let orders = await orderModel.find(q).sort({ date: -1 }).populate('userId', 'name email phone').lean()
+
+        // Attach a display customer id for each order.
+        orders = orders.map((o) => ({
+            ...o,
+            customerId: o.customerId || customerIdFor(o.userId),
+        }))
+
+        // Free-text search across order number / customer id / customer name.
+        const s = (search || '').trim().toLowerCase()
+        if (s) {
+            orders = orders.filter((o) =>
+                `${o.orderNumber || ''} ${o.customerId || ''} ${o.userId?.name || ''} ${o.address?.name || ''} ${o.userId?.phone || ''}`
+                    .toLowerCase().includes(s)
+            )
+        }
+
+        res.json({ success: true, orders })
     } catch (error) {
         console.log(error)
-        res.json({success:false,message:error.message})
+        res.json({ success: false, message: error.message })
     }
-
 }
 
 // User Order Data For Forntend
@@ -426,18 +489,189 @@ const userOrders = async (req,res) => {
     }
 }
 
-// update order status from Admin Panel
+// update order status from Admin Panel — drives the workflow side effects.
 const updateStatus = async (req,res) => {
     try {
-        
-        const { orderId, status } = req.body
+        const { orderId, status, note } = req.body
+        const order = await orderModel.findById(orderId)
+        if (!order) return res.json({ success: false, message: 'Order not found' })
 
-        await orderModel.findByIdAndUpdate(orderId, { status })
-        res.json({success:true,message:'Status Updated'})
+        const admin = req.adminEmail || 'admin'
 
+        // Confirmed → assign the LX order number (if still on a legacy/temp one) and
+        // generate the invoice.
+        if (status === 'Confirmed') {
+            if (!/^LX\d{4}100/.test(order.orderNumber || '')) {
+                order.orderNumber = await generateOrderNumber()
+            }
+        }
+
+        // Packed → decrement inventory exactly once and log the sale.
+        if (status === 'Packed' && !order.inventoryReduced) {
+            await reduceInventoryForOrder(order, admin)
+            order.inventoryReduced = true
+        }
+
+        order.status = status
+        order.statusHistory = order.statusHistory || []
+        order.statusHistory.push({ status, at: new Date(), by: admin, note: note || '' })
+        await order.save()
+
+        // Generate/refresh the invoice once confirmed (best-effort).
+        if (status === 'Confirmed') {
+            try { await generateInvoice(order) } catch (e) { console.log('invoice gen:', e.message) }
+        }
+
+        res.json({ success: true, message: `Status updated to ${status}`, orderNumber: order.orderNumber })
     } catch (error) {
         console.log(error)
-        res.json({success:false,message:error.message})
+        res.json({ success: false, message: error.message })
+    }
+}
+
+// Add an order note (admin).
+const addOrderNote = async (req, res) => {
+    try {
+        const { orderId, note } = req.body
+        if (!note?.trim()) return res.json({ success: false, message: 'Note is empty' })
+        const order = await orderModel.findByIdAndUpdate(
+            orderId,
+            { $push: { orderNotes: { note: note.trim(), by: req.adminEmail || 'admin', at: new Date() } } },
+            { new: true }
+        )
+        if (!order) return res.json({ success: false, message: 'Order not found' })
+        res.json({ success: true, message: 'Note added', orderNotes: order.orderNotes })
+    } catch (error) {
+        console.log(error)
+        res.json({ success: false, message: error.message })
+    }
+}
+
+// Capture pickup / dispatch details (delivery partner, courier, shipment id,
+// weight, dimensions) at the Pickuped stage.
+const setDelivery = async (req, res) => {
+    try {
+        const { orderId, partnerName, courierName, shipmentId, weight, dimensions, markPickuped } = req.body
+        const update = {
+            'delivery.partnerName': partnerName, 'delivery.courierName': courierName,
+            'delivery.shipmentId': shipmentId, 'delivery.weight': weight, 'delivery.dimensions': dimensions,
+        }
+        if (shipmentId) update.trackingNumber = shipmentId
+        if (markPickuped) update.status = 'Pickuped'
+        const order = await orderModel.findByIdAndUpdate(orderId, update, { new: true })
+        if (!order) return res.json({ success: false, message: 'Order not found' })
+        if (markPickuped) {
+            order.statusHistory.push({ status: 'Pickuped', at: new Date(), by: req.adminEmail || 'admin' })
+            await order.save()
+        }
+        res.json({ success: true, message: 'Dispatch details saved', order })
+    } catch (error) {
+        console.log(error)
+        res.json({ success: false, message: error.message })
+    }
+}
+
+// Manual order creation by admin.
+const createManualOrder = async (req, res) => {
+    try {
+        const { userId, items, address, paymentMethod = 'COD', payment = false, shippingCharge = 0, discount = 0 } = req.body
+        if (!Array.isArray(items) || items.length === 0) return res.json({ success: false, message: 'Add at least one item' })
+        if (!address?.name || !address?.phone) return res.json({ success: false, message: 'Customer name and phone are required' })
+
+        const subtotal = items.reduce((s, it) => s + Number(it.price || 0) * Number(it.quantity || 1), 0)
+        const amount = subtotal + Number(shippingCharge || 0) - Number(discount || 0)
+
+        // Resolve/attach a user if one was supplied, for the customer id.
+        let user = null
+        if (userId) { try { user = await userModel.findById(userId).lean() } catch { /* ignore */ } }
+
+        const order = new orderModel({
+            userId: userId || undefined,
+            orderNumber: await generateOrderNumber(),
+            items,
+            subtotal, discount, shippingCharge, amount,
+            address,
+            status: 'Confirmed',
+            paymentMethod, payment: !!payment,
+            isManual: true,
+            customerId: user ? customerIdFor(user) : undefined,
+            statusHistory: [{ status: 'Confirmed', at: new Date(), by: req.adminEmail || 'admin', note: 'Manual order' }],
+            date: Date.now(),
+        })
+        await order.save()
+        try { await generateInvoice(order) } catch (e) { console.log('invoice gen:', e.message) }
+        res.json({ success: true, message: 'Manual order created', orderId: order._id, orderNumber: order.orderNumber })
+    } catch (error) {
+        console.log(error)
+        res.json({ success: false, message: error.message })
+    }
+}
+
+// Orders report — grouped counts + revenue by day / week / month / year.
+const ordersReport = async (req, res) => {
+    try {
+        const period = (req.query.period || 'daily').toLowerCase()
+        const fmt = { daily: '%Y-%m-%d', weekly: '%G-W%V', monthly: '%Y-%m', yearly: '%Y' }[period] || '%Y-%m-%d'
+        const rows = await orderModel.aggregate([
+            {
+                $group: {
+                    _id: { $dateToString: { format: fmt, date: { $toDate: '$date' } } },
+                    orders: { $sum: 1 },
+                    revenue: { $sum: '$amount' },
+                    delivered: { $sum: { $cond: [{ $eq: ['$status', 'Delivered'] }, 1, 0] } },
+                    cancelled: { $sum: { $cond: [{ $eq: ['$status', 'Cancelled'] }, 1, 0] } },
+                },
+            },
+            { $sort: { _id: -1 } },
+            { $limit: 90 },
+        ])
+        res.json({ success: true, period, rows })
+    } catch (error) {
+        console.log(error)
+        res.json({ success: false, message: error.message })
+    }
+}
+
+// Excel export — delivered / cancelled orders only: order id, date/time, product, status.
+const exportOrdersExcel = async (req, res) => {
+    try {
+        const { status = 'Delivered', from, to } = req.query
+        const q = {}
+        if (status && status !== 'All') q.status = status
+        else q.status = { $in: ['Delivered', 'Cancelled'] }
+        if (from || to) {
+            q.date = {}
+            if (from) q.date.$gte = new Date(from).getTime()
+            if (to) q.date.$lte = new Date(to).getTime() + 86400000
+        }
+        const orders = await orderModel.find(q).sort({ date: -1 }).lean()
+
+        const data = []
+        orders.forEach((o) => {
+            const dt = new Date(o.date)
+            const products = (o.items || []).map((i) => `${i.name} x${i.quantity}${i.size ? ` (${i.size})` : ''}`).join('; ')
+            data.push({
+                'Order ID': o.orderNumber,
+                'Date': dt.toLocaleDateString('en-IN'),
+                'Time': dt.toLocaleTimeString('en-IN'),
+                'Product': products,
+                'Amount': o.amount,
+                'Payment': o.paymentMethod,
+                'Status': o.status,
+            })
+        })
+
+        const XLSX = (await import('xlsx')).default
+        const ws = XLSX.utils.json_to_sheet(data)
+        const wb = XLSX.utils.book_new()
+        XLSX.utils.book_append_sheet(wb, ws, 'Orders')
+        const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' })
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        res.setHeader('Content-Disposition', `attachment; filename="orders-${status}-${Date.now()}.xlsx"`)
+        res.send(buf)
+    } catch (error) {
+        console.log(error)
+        if (!res.headersSent) res.status(500).json({ success: false, message: error.message })
     }
 }
 
@@ -466,4 +700,4 @@ const downloadInvoice = async (req, res) => {
     }
 };
 
-export {verifyRazorpay, verifyStripe ,placeOrder, placeOrderStripe, placeOrderRazorpay, placeOrderCashfree, verifyCashfree, allOrders, userOrders, updateStatus, downloadInvoice}
+export {verifyRazorpay, verifyStripe ,placeOrder, placeOrderStripe, placeOrderRazorpay, placeOrderCashfree, verifyCashfree, allOrders, userOrders, updateStatus, downloadInvoice, addOrderNote, setDelivery, createManualOrder, ordersReport, exportOrdersExcel}

@@ -2,66 +2,114 @@ import { v2 as cloudinary } from "cloudinary"
 import { ensureCloudinary } from "../config/cloudinary.js"
 import productModel from "../models/productModel.js"
 import userModel from "../models/userModel.js"
+import orderModel from "../models/orderModel.js"
+
+// Parse a JSON-ish form field that may arrive as a string (multipart) or already
+// parsed (JSON body). Returns `fallback` on empty / invalid.
+const parseMaybe = (v, fallback) => {
+    if (v === undefined || v === null || v === '') return fallback
+    if (typeof v !== 'string') return v
+    try { return JSON.parse(v) } catch { return fallback }
+}
+
+// Collect uploaded image files from either the fixed image1..image7 fields or a
+// generic `images` field, in order.
+const collectImageFiles = (files) => {
+    if (!files) return []
+    const named = []
+    for (let i = 1; i <= 7; i++) {
+        const f = files[`image${i}`]
+        if (f && f[0]) named.push(f[0])
+    }
+    if (files.images) named.push(...files.images)
+    return named
+}
+
+const uploadImage = async (file, folder, publicId) => {
+    const opts = { resource_type: 'image', folder }
+    if (publicId) opts.public_id = publicId
+    const r = await cloudinary.uploader.upload(file.path, opts)
+    return r.secure_url
+}
+
+// Build the shared product field set from the request body (used by add + update).
+const productFieldsFromBody = (body) => {
+    const {
+        name, description, shortDescription, price, discountPrice, category, subCategory,
+        sizes, variants, bestseller, featured, brand, material, fabric, careInstructions,
+        tags, status, productCode, audience, highlights, productType, netQuantity,
+        countryOfOrigin, manufactureDate, measurements,
+    } = body
+
+    const data = {}
+    if (name !== undefined) data.name = name
+    if (description !== undefined) data.description = description
+    if (shortDescription !== undefined) data.shortDescription = shortDescription
+    if (category !== undefined) data.category = category
+    if (subCategory !== undefined) data.subCategory = subCategory
+    if (price !== undefined && price !== '') data.price = Number(price)
+    if (discountPrice !== undefined) data.discountPrice = discountPrice === '' ? undefined : Number(discountPrice)
+    if (brand !== undefined) data.brand = brand
+    if (material !== undefined) data.material = material
+    if (fabric !== undefined) data.fabric = fabric
+    if (careInstructions !== undefined) data.careInstructions = careInstructions
+    if (productCode !== undefined && productCode !== '') data.productCode = productCode
+    if (audience !== undefined && audience !== '') data.audience = audience
+    if (productType !== undefined) data.productType = productType
+    if (netQuantity !== undefined) data.netQuantity = netQuantity
+    if (countryOfOrigin !== undefined) data.countryOfOrigin = countryOfOrigin
+    if (manufactureDate !== undefined) data.manufactureDate = manufactureDate
+    if (status !== undefined && status !== '') data.status = status
+    if (bestseller !== undefined) data.bestseller = bestseller === true || bestseller === 'true'
+    if (featured !== undefined) data.featured = featured === true || featured === 'true'
+    if (sizes !== undefined) data.sizes = parseMaybe(sizes, [])
+    if (variants !== undefined) data.variants = parseMaybe(variants, [])
+    if (tags !== undefined) data.tags = parseMaybe(tags, [])
+    if (highlights !== undefined) data.highlights = parseMaybe(highlights, [])
+    if (measurements !== undefined) data.measurements = parseMaybe(measurements, undefined)
+    return data
+}
 
 // function for add product
 const addProduct = async (req, res) => {
     try {
+        const data = productFieldsFromBody(req.body)
+        if (!data.name || data.price === undefined) {
+            return res.json({ success: false, message: 'Name and MRP (price) are required' })
+        }
+        data.status = data.status || 'active'
+        data.image = []
+        data.date = Date.now()
 
-        const { name, description, price, discountPrice, category, subCategory, sizes, variants, bestseller, featured, brand, material, careInstructions, tags, status } = req.body
+        const images = collectImageFiles(req.files)
+        const sizeChartFile = req.files?.sizeChart?.[0]
+        const videoFiles = req.files?.video || []
+        if (images.length || sizeChartFile || videoFiles.length) ensureCloudinary()
 
-        const image1 = req.files.image1 && req.files.image1[0]
-        const image2 = req.files.image2 && req.files.image2[0]
-        const image3 = req.files.image3 && req.files.image3[0]
-        const image4 = req.files.image4 && req.files.image4[0]
-        const image5 = req.files.image5 && req.files.image5[0]
+        const product = new productModel(data)
+        await product.save() // assigns productCode, SKUs, barcodes
 
-        const images = [image1, image2, image3, image4, image5].filter((item) => item !== undefined)
-
-        // Guarantee Cloudinary is configured before any upload (serverless-safe).
-        if (images.length) ensureCloudinary()
-
-        const productData = {
-            name,
-            description,
-            category,
-            price: Number(price),
-            discountPrice: discountPrice ? Number(discountPrice) : undefined,
-            subCategory,
-            sizes: sizes ? JSON.parse(sizes) : [],
-            bestseller: bestseller === "true" ? true : false,
-            featured: featured === "true" ? true : false,
-            variants: variants ? JSON.parse(variants) : [],
-            brand,
-            material,
-            careInstructions,
-            tags: tags ? JSON.parse(tags) : [],
-            status: status || 'active',
-            image: [],
-            date: Date.now()
+        // Upload media into the product's own Cloudinary folder.
+        const folder = `locoxo/products/${product._id}`
+        if (images.length) {
+            product.image = await Promise.all(images.map((f, i) => uploadImage(f, folder, `image_${i + 1}`)))
+        }
+        if (sizeChartFile) product.sizeChart = await uploadImage(sizeChartFile, folder, 'size_chart')
+        if (videoFiles.length) {
+            product.video = await Promise.all(videoFiles.map(async (f, i) => {
+                const r = await cloudinary.uploader.upload(f.path, { resource_type: 'video', folder, public_id: `video_${i + 1}` })
+                return r.secure_url
+            }))
+        } else {
+            const videoUrls = parseMaybe(req.body.videoUrls, [])
+            if (Array.isArray(videoUrls) && videoUrls.length) product.video = videoUrls
         }
 
-        const product = new productModel(productData);
+        // Fall back to a placeholder so the product always has a thumbnail.
+        if (!product.image.length) product.image = ['https://placehold.co/600x800/0E4F86/FFFFFF?text=LOCOXO']
         await product.save()
 
-        let imagesUrl = await Promise.all(
-            images.map(async (item, index) => {
-                let result = await cloudinary.uploader.upload(item.path, { 
-                    resource_type: 'image',
-                    folder: `locoxo/products/${product._id}`,
-                    public_id: `image_${index + 1}`
-                });
-                return result.secure_url
-            })
-        )
-
-        product.image = imagesUrl;
-        await product.save();
-
-        console.log('Product created with ID:', product._id);
-        console.log('Images uploaded to Cloudinary folder: locoxo/products/' + product._id);
-
-        res.json({ success: true, message: "Product Added", productId: product._id })
-
+        res.json({ success: true, message: "Product Added", productId: product._id, productCode: product.productCode })
     } catch (error) {
         console.log(error)
         res.json({ success: false, message: error.message })
@@ -229,21 +277,92 @@ const getRecentlyViewed = async (req, res) => {
 
 const updateProduct = async (req, res) => {
     try {
-        const { id } = req.params;
-        const updateData = req.body;
-        
-        const product = await productModel.findByIdAndUpdate(id, updateData, { new: true });
-        
-        if (!product) {
-            return res.json({ success: false, message: 'Product not found' });
+        const { id } = req.params
+        const product = await productModel.findById(id)
+        if (!product) return res.json({ success: false, message: 'Product not found' })
+
+        // Apply text/structured fields.
+        const data = productFieldsFromBody(req.body)
+        Object.assign(product, data)
+
+        // Media handling (works for JSON updates and multipart with new files).
+        const images = collectImageFiles(req.files)
+        const sizeChartFile = req.files?.sizeChart?.[0]
+        const videoFiles = req.files?.video || []
+        if (images.length || sizeChartFile || videoFiles.length) ensureCloudinary()
+
+        const folder = `locoxo/products/${product._id}`
+        // Keep whichever existing images the client says to keep, then append new ones.
+        const keep = parseMaybe(req.body.keepImages, null)
+        let nextImages = Array.isArray(keep) ? keep : [...(product.image || [])]
+        if (images.length) {
+            const uploaded = await Promise.all(images.map((f, i) => uploadImage(f, folder, `image_${Date.now()}_${i}`)))
+            nextImages = [...nextImages, ...uploaded]
         }
-        
-        res.json({ success: true, message: 'Product updated successfully', product });
+        if (nextImages.length) product.image = nextImages
+
+        if (sizeChartFile) product.sizeChart = await uploadImage(sizeChartFile, folder, 'size_chart')
+        if (videoFiles.length) {
+            const vids = await Promise.all(videoFiles.map(async (f, i) => {
+                const r = await cloudinary.uploader.upload(f.path, { resource_type: 'video', folder, public_id: `video_${Date.now()}_${i}` })
+                return r.secure_url
+            }))
+            product.video = [...(product.video || []), ...vids]
+        }
+        const videoUrls = parseMaybe(req.body.videoUrls, null)
+        if (Array.isArray(videoUrls)) product.video = videoUrls
+
+        await product.save() // recomputes discountPercent, keeps SKUs/barcodes
+        res.json({ success: true, message: 'Product updated successfully', product })
     } catch (error) {
-        console.log(error);
-        res.json({ success: false, message: error.message });
+        console.log(error)
+        res.json({ success: false, message: error.message })
     }
-};
+}
+
+// Quick status change: Active / Draft / Hidden / Coming soon / Inactive.
+const setProductStatus = async (req, res) => {
+    try {
+        const { id } = req.params
+        const { status } = req.body
+        const allowed = ['active', 'inactive', 'out_of_stock', 'draft', 'hidden', 'coming_soon']
+        if (!allowed.includes(status)) return res.json({ success: false, message: 'Invalid status' })
+        const product = await productModel.findByIdAndUpdate(id, { status }, { new: true })
+        if (!product) return res.json({ success: false, message: 'Product not found' })
+        res.json({ success: true, message: `Status set to ${status}`, product })
+    } catch (error) {
+        console.log(error)
+        res.json({ success: false, message: error.message })
+    }
+}
+
+// Duplicate an existing product (fresh code + SKUs + barcodes, starts as Draft).
+const duplicateProduct = async (req, res) => {
+    try {
+        const src = await productModel.findById(req.params.id).lean()
+        if (!src) return res.json({ success: false, message: 'Product not found' })
+
+        const clone = { ...src }
+        delete clone._id; delete clone.createdAt; delete clone.updatedAt
+        delete clone.productCode                    // regenerated on save
+        clone.name = `${src.name} (Copy)`
+        clone.status = 'draft'
+        clone.viewCount = 0
+        clone.rating = 0; clone.reviewCount = 0
+        clone.variants = (src.variants || []).map((v) => ({
+            size: v.size, color: v.color, colorCode: v.colorCode, stock: v.stock,
+            // sku/barcode/humanBarcode intentionally omitted → regenerated
+        }))
+        clone.date = Date.now()
+
+        const doc = new productModel(clone)
+        await doc.save()
+        res.json({ success: true, message: 'Product duplicated', productId: doc._id, productCode: doc.productCode })
+    } catch (error) {
+        console.log(error)
+        res.json({ success: false, message: error.message })
+    }
+}
 
 const updateStock = async (req, res) => {
     try {
@@ -267,4 +386,137 @@ const updateStock = async (req, res) => {
     }
 };
 
-export { listProducts, addProduct, removeProduct, singleProduct, getRelatedProducts, getRecentlyViewed, updateProduct, updateStock }
+// GET /api/product/dashboard — every product with live view / wishlist / purchase
+// counts + status + pricing, for the Product Management dashboard.
+const productDashboard = async (req, res) => {
+    try {
+        const products = await productModel.find({}).sort({ date: -1 }).lean()
+
+        // Wishlist counts: how many users have each product wishlisted.
+        const wishAgg = await userModel.aggregate([
+            { $unwind: '$wishlist' },
+            { $group: { _id: '$wishlist', c: { $sum: 1 } } },
+        ])
+        const wishMap = Object.fromEntries(wishAgg.map((w) => [String(w._id), w.c]))
+
+        // Purchase counts (units sold) from non-cancelled orders.
+        const buyAgg = await orderModel.aggregate([
+            { $match: { status: { $nin: ['Cancelled'] } } },
+            { $unwind: '$items' },
+            { $group: { _id: '$items.productId', units: { $sum: '$items.quantity' } } },
+        ])
+        const buyMap = Object.fromEntries(buyAgg.map((b) => [String(b._id), b.units]))
+
+        const rows = products.map((p) => {
+            const totalStock = (p.variants || []).reduce((s, v) => s + (v.stock || 0), 0)
+            return {
+                _id: p._id,
+                productCode: p.productCode,
+                name: p.name,
+                image: Array.isArray(p.image) ? p.image[0] : p.image,
+                category: p.category,
+                audience: p.audience,
+                status: p.status,
+                price: p.price,
+                discountPrice: p.discountPrice,
+                discountPercent: p.discountPercent,
+                totalStock,
+                variants: (p.variants || []).length,
+                viewCount: p.viewCount || 0,
+                wishlistCount: wishMap[String(p._id)] || 0,
+                purchaseCount: buyMap[String(p._id)] || 0,
+                date: p.date,
+            }
+        })
+
+        // Status tallies for the dashboard tiles.
+        const counts = rows.reduce((a, r) => { a[r.status] = (a[r.status] || 0) + 1; return a }, {})
+        res.json({ success: true, rows, counts, total: rows.length })
+    } catch (error) {
+        console.log(error)
+        res.json({ success: false, message: error.message })
+    }
+}
+
+// GET /api/product/report/daily — products added per day (date-wise report).
+const productsAddedReport = async (req, res) => {
+    try {
+        const rows = await productModel.aggregate([
+            {
+                $group: {
+                    _id: { $dateToString: { format: '%Y-%m-%d', date: { $toDate: '$date' } } },
+                    count: { $sum: 1 },
+                    products: { $push: { name: '$name', productCode: '$productCode' } },
+                },
+            },
+            { $sort: { _id: -1 } },
+            { $limit: 60 },
+        ])
+        res.json({ success: true, rows })
+    } catch (error) {
+        console.log(error)
+        res.json({ success: false, message: error.message })
+    }
+}
+
+// POST /api/product/import-excel — bulk-create products from an .xlsx/.csv upload.
+// Recognised columns (case-insensitive): name, mrp/price, sellingPrice, category,
+// audience, size, color, stock, fabric, description, status.
+const importExcel = async (req, res) => {
+    try {
+        const file = req.files?.file?.[0] || req.file
+        if (!file) return res.json({ success: false, message: 'No file uploaded' })
+
+        const XLSX = (await import('xlsx')).default
+        const wb = XLSX.readFile(file.path)
+        const sheet = wb.Sheets[wb.SheetNames[0]]
+        const raw = XLSX.utils.sheet_to_json(sheet, { defval: '' })
+        if (!raw.length) return res.json({ success: false, message: 'Sheet is empty' })
+
+        const pick = (row, ...keys) => {
+            const lower = Object.fromEntries(Object.entries(row).map(([k, v]) => [k.toLowerCase().trim(), v]))
+            for (const k of keys) { const val = lower[k.toLowerCase()]; if (val !== undefined && val !== '') return val }
+            return undefined
+        }
+
+        const created = [], errors = []
+        for (let i = 0; i < raw.length; i++) {
+            const row = raw[i]
+            try {
+                const name = pick(row, 'name', 'product name', 'productname')
+                const mrp = pick(row, 'mrp', 'price')
+                if (!name || mrp === undefined) throw new Error('Missing name or MRP')
+                const selling = pick(row, 'sellingprice', 'selling price', 'selling')
+                const doc = new productModel({
+                    name: String(name),
+                    description: String(pick(row, 'description', 'desc') || name),
+                    price: Number(mrp),
+                    discountPrice: selling !== undefined ? Number(selling) : undefined,
+                    category: String(pick(row, 'category') || 'Uncategorized'),
+                    subCategory: String(pick(row, 'subcategory', 'sub category') || 'General'),
+                    audience: pick(row, 'audience', 'gender') || undefined,
+                    fabric: pick(row, 'fabric', 'material') || undefined,
+                    brand: pick(row, 'brand') || 'LOCOXO',
+                    status: pick(row, 'status') || 'active',
+                    image: ['https://placehold.co/600x800/0E4F86/FFFFFF?text=LOCOXO'],
+                    variants: [{
+                        size: String(pick(row, 'size') || 'Free'),
+                        color: String(pick(row, 'color', 'colour') || 'Default'),
+                        stock: Number(pick(row, 'stock') || 0),
+                    }],
+                    date: Date.now(),
+                })
+                await doc.save()
+                created.push({ name: doc.name, productCode: doc.productCode })
+            } catch (err) {
+                errors.push({ row: i + 2, name: row.name || row.Name, error: err.message })
+            }
+        }
+        res.json({ success: true, message: `Imported ${created.length} product(s)${errors.length ? `, ${errors.length} failed` : ''}`, created, errors })
+    } catch (error) {
+        console.log(error)
+        res.json({ success: false, message: error.message })
+    }
+}
+
+export { listProducts, addProduct, removeProduct, singleProduct, getRelatedProducts, getRecentlyViewed, updateProduct, updateStock, setProductStatus, duplicateProduct, productDashboard, productsAddedReport, importExcel }
