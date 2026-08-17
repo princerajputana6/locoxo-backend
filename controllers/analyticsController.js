@@ -1,6 +1,8 @@
 import orderModel from "../models/orderModel.js";
 import userModel from "../models/userModel.js";
 import productModel from "../models/productModel.js";
+import ticketModel from "../models/ticketModel.js";
+import returnModel from "../models/returnModel.js";
 
 const monthKey = (d) => {
     const dt = new Date(d);
@@ -118,4 +120,69 @@ const getOverview = async (req, res) => {
     }
 };
 
-export { getOverview };
+// GET /api/analytics/dashboard — everything for the admin Dashboard (image 15).
+const getDashboard = async (req, res) => {
+    try {
+        const orders = await orderModel.find({}, 'status paymentMethod amount date items userId').lean();
+        const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
+        const isCOD = (o) => (o.paymentMethod || '').toUpperCase() === 'COD';
+        const dispatched = ['Pickuped', 'Shipped', 'Out for delivery', 'Out for Delivery', 'Delivered'];
+
+        const totalSales = orders.filter((o) => o.status !== 'Cancelled').reduce((a, o) => a + (o.amount || 0), 0);
+        const todayRevenue = orders.filter((o) => o.date >= startOfToday.getTime() && o.status !== 'Cancelled').reduce((a, o) => a + (o.amount || 0), 0);
+
+        const [products, users, tickets, returns] = await Promise.all([
+            productModel.find({}, 'name viewCount variants lowStockThreshold').lean(),
+            userModel.find({ role: { $ne: 'admin' } }, 'name email createdAt').sort({ createdAt: -1 }).lean(),
+            ticketModel.find({}, 'createdAt').lean(),
+            returnModel.find({}, 'type status').lean(),
+        ]);
+
+        const stockAlerts = products.filter((p) => {
+            const t = p.lowStockThreshold ?? 5; const stock = (p.variants || []).reduce((s, v) => s + (v.stock || 0), 0);
+            return stock <= t;
+        }).length;
+
+        // Which product viewed / best selling.
+        const productViews = [...products].sort((a, b) => (b.viewCount || 0) - (a.viewCount || 0)).slice(0, 5).map((p) => ({ name: p.name, views: p.viewCount || 0 }));
+        const soldAgg = await orderModel.aggregate([
+            { $match: { status: { $nin: ['Cancelled'] } } }, { $unwind: '$items' },
+            { $group: { _id: '$items.name', sold: { $sum: '$items.quantity' } } }, { $sort: { sold: -1 } }, { $limit: 5 },
+        ]);
+        const bestSellers = soldAgg.map((s) => ({ name: s._id, sold: s.sold }));
+
+        // Tickets today + complaint breakdown.
+        const dailyTickets = tickets.filter((t) => new Date(t.createdAt) >= startOfToday).length;
+        const complaints = {
+            resolved: returns.filter((r) => r.status === 'refund_transferred' || r.status === 'completed').length,
+            inProgress: returns.filter((r) => ['pickup_requested', 'approved', 'refund_pending'].includes(r.status)).length,
+            pending: returns.filter((r) => ['requested', 'pending'].includes(r.status)).length,
+        };
+        complaints.total = complaints.resolved + complaints.inProgress + complaints.pending;
+
+        res.json({
+            success: true,
+            cards: {
+                recentOrders: orders.length,
+                codOrders: orders.filter(isCOD).length,
+                pickupOrders: orders.filter((o) => o.status === 'Pickuped').length,
+                pendingOrders: orders.filter((o) => o.status === 'Pending').length,
+                dispatchedOrders: orders.filter((o) => dispatched.includes(o.status)).length,
+                rtoExchangeReturn: returns.length,
+                stockAlerts,
+                ordersToday: orders.filter((o) => o.date >= startOfToday.getTime()).length,
+                totalSales, todayRevenue,
+            },
+            recentCustomers: users.slice(0, 5).map((u) => ({ name: u.name, email: u.email, at: u.createdAt })),
+            totalCustomers: users.length,
+            totalProducts: products.length,
+            cancelledRequests: orders.filter((o) => o.status === 'Cancelled').length,
+            productViews, bestSellers, dailyTickets, complaints,
+        });
+    } catch (error) {
+        console.log(error);
+        res.json({ success: false, message: error.message });
+    }
+};
+
+export { getOverview, getDashboard };

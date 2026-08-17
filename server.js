@@ -26,6 +26,7 @@ import analyticsRouter from './routes/analyticsRoute.js'
 import campaignRouter from './routes/campaignRoute.js'
 import aiRouter from './routes/aiRoute.js'
 import merchandisingRouter from './routes/merchandisingRoute.js'
+import adminMgmtRouter from './routes/adminMgmtRoute.js'
 
 // App Config
 const app = express()
@@ -119,6 +120,7 @@ app.use('/api/analytics',analyticsRouter)
 app.use('/api/campaign',campaignRouter)
 app.use('/api/ai',aiRouter)
 app.use('/api/merchandising',merchandisingRouter)
+app.use('/api/admin-mgmt',adminMgmtRouter)
 
 app.get('/',(req,res)=>{
     res.send("API Working")

@@ -7,20 +7,16 @@ import jwt from 'jsonwebtoken'
 // Add new influencer
 const addInfluencer = async (req, res) => {
     try {
-        const { name, email, password, phone, instagramHandle, productId, commissionRate } = req.body;
+        const { name, email, password, phone, dob, instagramHandle, productId, commissionRate,
+            code, type, category, address, notes, commissionType, commissionAmount, sameCommissionForAll, status } = req.body;
         const image = req.file;
 
-        // Check if influencer already exists
         const exists = await influencerModel.findOne({ email });
-        if (exists) {
-            return res.json({ success: false, message: "Influencer with this email already exists" });
-        }
+        if (exists) return res.json({ success: false, message: "Influencer with this email already exists" });
 
-        // Hash password
         const salt = await bcrypt.genSalt(10);
-        const hashedPassword = await bcrypt.hash(password, salt);
+        const hashedPassword = await bcrypt.hash(password || Math.random().toString(36).slice(2), salt);
 
-        // Upload image to cloudinary if provided
         let imageUrl = '';
         if (image) {
             ensureCloudinary()
@@ -28,19 +24,21 @@ const addInfluencer = async (req, res) => {
             imageUrl = imageUpload.secure_url;
         }
 
-        // Generate unique referral code
-        const referralCode = 'INF' + Date.now() + Math.floor(Math.random() * 1000);
+        // Custom code (upper-cased, unique) or auto-generated.
+        let referralCode = (code || '').trim().toUpperCase();
+        if (!referralCode || await influencerModel.findOne({ referralCode })) {
+            referralCode = (name || 'INF').replace(/[^A-Za-z]/g, '').toUpperCase().slice(0, 5) + Math.floor(10 + Math.random() * 90);
+        }
 
         const influencerData = {
-            name,
-            email,
-            password: hashedPassword,
-            phone,
-            instagramHandle,
-            productId,
-            image: imageUrl,
-            commissionRate: commissionRate || 10,
-            referralCode
+            name, email, password: hashedPassword, phone, instagramHandle, productId, image: imageUrl,
+            dob: dob || undefined, type: type || 'other', category, address, notes,
+            commissionType: commissionType || 'percentage',
+            commissionRate: commissionRate ? Number(commissionRate) : 10,
+            commissionAmount: commissionAmount ? Number(commissionAmount) : 0,
+            sameCommissionForAll: sameCommissionForAll !== 'false' && sameCommissionForAll !== false,
+            status: status || 'active',
+            referralCode,
         };
 
         const influencer = new influencerModel(influencerData);
@@ -62,8 +60,23 @@ const addInfluencer = async (req, res) => {
 // List all influencers
 const listInfluencers = async (req, res) => {
     try {
-        const influencers = await influencerModel.find({}).populate('productId', 'name price image');
-        res.json({ success: true, influencers });
+        const { status, type, search } = req.query;
+        const filter = {};
+        if (status && status !== 'All') filter.status = status;
+        if (type && type !== 'All') filter.type = type;
+        let influencers = await influencerModel.find(filter, '-password').populate('productId', 'name price image').sort({ createdAt: -1 }).lean();
+        const s = (search || '').trim().toLowerCase();
+        if (s) influencers = influencers.filter((i) => `${i.name} ${i.email} ${i.referralCode}`.toLowerCase().includes(s));
+
+        const all = await influencerModel.find({}, 'status totalEarnings conversions').lean();
+        const summary = {
+            total: all.length,
+            active: all.filter((i) => i.status === 'active').length,
+            deactivated: all.filter((i) => ['deactivated', 'inactive', 'suspended'].includes(i.status)).length,
+            totalRevenue: all.reduce((a, i) => a + (i.totalEarnings || 0), 0),
+            totalSales: all.reduce((a, i) => a + (i.conversions || 0), 0),
+        };
+        res.json({ success: true, influencers, summary });
     } catch (error) {
         console.log(error);
         res.json({ success: false, message: error.message });
