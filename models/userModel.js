@@ -71,7 +71,8 @@ const userSchema = new mongoose.Schema({
         lastPaymentId: { type: String }
     },
 
-    status: { type: String, enum: ['active', 'inactive', 'blocked'], default: 'active' }
+    status: { type: String, enum: ['active', 'inactive', 'blocked'], default: 'active' },
+    codDisabled: { type: Boolean, default: false } // admin can remove the COD option for a customer
 }, { minimize: false, timestamps: true })
 
 const userModel = mongoose.models.user || mongoose.model('user',userSchema);

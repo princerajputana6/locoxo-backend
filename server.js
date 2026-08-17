@@ -25,6 +25,7 @@ import referralRouter from './routes/referralRoute.js'
 import analyticsRouter from './routes/analyticsRoute.js'
 import campaignRouter from './routes/campaignRoute.js'
 import aiRouter from './routes/aiRoute.js'
+import merchandisingRouter from './routes/merchandisingRoute.js'
 
 // App Config
 const app = express()
@@ -117,6 +118,7 @@ app.use('/api/referral',referralRouter)
 app.use('/api/analytics',analyticsRouter)
 app.use('/api/campaign',campaignRouter)
 app.use('/api/ai',aiRouter)
+app.use('/api/merchandising',merchandisingRouter)
 
 app.get('/',(req,res)=>{
     res.send("API Working")

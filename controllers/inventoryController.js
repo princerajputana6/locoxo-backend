@@ -5,8 +5,9 @@ import { ensureCloudinary } from '../config/cloudinary.js'
 import productModel from '../models/productModel.js'
 import orderModel from '../models/orderModel.js'
 import stockAdjustmentModel from '../models/stockAdjustmentModel.js'
-import { peekSeq } from '../models/counterModel.js'
+import { peekSeq, nextSeq } from '../models/counterModel.js'
 import { productCode as buildProductCode } from '../utils/barcode.js'
+import productCodeModel from '../models/productCodeModel.js'
 import company from '../config/company.js'
 
 const PLACEHOLDER_IMG = 'https://placehold.co/600x800/0E4F86/FFFFFF?text=LOCOXO'
@@ -534,6 +535,111 @@ export const nextProductCode = async (req, res) => {
         const year = new Date().getFullYear()
         const seq = await peekSeq(`productCode:${year}`)
         res.json({ success: true, productCode: buildProductCode(year, seq), year, seq })
+    } catch (error) {
+        console.log(error)
+        res.json({ success: false, message: error.message })
+    }
+}
+
+// ── Product Code registry ───────────────────────────────────────────────────
+// POST /api/inventory/product-code  body { code?, category, fabric, shortDescription }
+export const createProductCode = async (req, res) => {
+    try {
+        let { code, category, fabric, shortDescription } = req.body
+        if (!code || /automatic/i.test(code)) {
+            const year = new Date().getFullYear()
+            const seq = await nextSeq(`productCode:${year}`)
+            code = buildProductCode(year, seq)
+        }
+        const doc = await productCodeModel.create({ code, category, fabric, shortDescription })
+        res.json({ success: true, message: 'Product code created', productCode: doc })
+    } catch (error) {
+        console.log(error)
+        res.json({ success: false, message: error.code === 11000 ? 'That code already exists' : error.message })
+    }
+}
+
+// GET /api/inventory/product-code?search=
+export const listProductCodes = async (req, res) => {
+    try {
+        const q = {}
+        const s = (req.query.search || '').trim()
+        if (s) q.$or = [{ code: new RegExp(s, 'i') }, { category: new RegExp(s, 'i') }, { fabric: new RegExp(s, 'i') }]
+        const rows = await productCodeModel.find(q).sort({ createdAt: -1 }).lean()
+        res.json({ success: true, rows })
+    } catch (error) {
+        console.log(error)
+        res.json({ success: false, message: error.message })
+    }
+}
+
+// PUT /api/inventory/product-code/:id
+export const updateProductCodeEntry = async (req, res) => {
+    try {
+        const { category, fabric, shortDescription } = req.body
+        const doc = await productCodeModel.findByIdAndUpdate(req.params.id, { category, fabric, shortDescription }, { new: true })
+        if (!doc) return res.json({ success: false, message: 'Not found' })
+        res.json({ success: true, message: 'Updated', productCode: doc })
+    } catch (error) {
+        console.log(error)
+        res.json({ success: false, message: error.message })
+    }
+}
+
+// DELETE /api/inventory/product-code/:id
+export const deleteProductCodeEntry = async (req, res) => {
+    try {
+        const doc = await productCodeModel.findByIdAndDelete(req.params.id)
+        if (!doc) return res.json({ success: false, message: 'Not found' })
+        res.json({ success: true, message: 'Deleted' })
+    } catch (error) {
+        console.log(error)
+        res.json({ success: false, message: error.message })
+    }
+}
+
+// GET /api/inventory/overview — hub data for the Inventory Overview page.
+export const inventoryOverview = async (req, res) => {
+    try {
+        const products = await productModel.find({}, 'name productCode category image variants lowStockThreshold price').lean()
+        let totalProducts = products.length, inStock = 0, lowStock = 0, outOfStock = 0, totalValue = 0
+        const outList = [], lowList = [], stockRows = []
+
+        products.forEach((p) => {
+            const threshold = p.lowStockThreshold ?? 5
+            const total = (p.variants || []).reduce((s, v) => s + (v.stock || 0), 0)
+            totalValue += total * (p.price || 0)
+            const state = total <= 0 ? 'out' : total <= threshold ? 'low' : 'in'
+            if (state === 'in') inStock++; else if (state === 'low') lowStock++; else outOfStock++
+            const sku = (p.variants || [])[0]?.sku || ''
+            const barcode = (p.variants || [])[0]?.barcode || ''
+            const row = {
+                _id: p._id, productCode: p.productCode, name: p.name, category: p.category,
+                image: Array.isArray(p.image) ? p.image[0] : p.image,
+                sku, barcode, stockQty: total, reserved: 0, available: total,
+                status: state === 'in' ? 'In Stock' : state === 'low' ? 'Low Stock' : 'Out of Stock',
+            }
+            stockRows.push(row)
+            if (state === 'out') outList.push(row)
+            if (state === 'low') lowList.push(row)
+        })
+
+        const totalSkus = products.reduce((s, p) => s + (p.variants || []).length, 0)
+        const recentAdjustments = await stockAdjustmentModel.find({}).sort({ createdAt: -1 }).limit(6).lean()
+
+        res.json({
+            success: true,
+            summary: {
+                totalProducts, inStock, lowStock, outOfStock, totalSkus, totalValue,
+                inStockPct: totalProducts ? Math.round((inStock / totalProducts) * 1000) / 10 : 0,
+                lowStockPct: totalProducts ? Math.round((lowStock / totalProducts) * 1000) / 10 : 0,
+                outStockPct: totalProducts ? Math.round((outOfStock / totalProducts) * 1000) / 10 : 0,
+            },
+            outOfStock: outList.slice(0, 20),
+            lowStock: lowList.slice(0, 20),
+            stockRows: stockRows.slice(0, 50),
+            recentAdjustments,
+        })
     } catch (error) {
         console.log(error)
         res.json({ success: false, message: error.message })

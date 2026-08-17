@@ -98,10 +98,31 @@ const closeMyTicket = async (req, res) => {
 // Admin: list all tickets (with optional status filter)
 const listAllTickets = async (req, res) => {
     try {
-        const { status } = req.query;
-        const filter = status ? { status } : {};
-        const tickets = await ticketModel.find(filter).sort({ updatedAt: -1 });
-        res.json({ success: true, tickets });
+        const { status, priority, category, search } = req.query;
+        const filter = {};
+        if (status && status !== 'All') filter.status = status;
+        if (priority && priority !== 'All') filter.priority = priority;
+        if (category && category !== 'All') filter.category = category;
+        let tickets = await ticketModel.find(filter).sort({ updatedAt: -1 }).lean();
+
+        const s = (search || '').trim().toLowerCase();
+        if (s) tickets = tickets.filter((t) => `${t.ticketNumber || ''} ${t.subject || ''} ${t.userName || ''} ${t.userEmail || ''}`.toLowerCase().includes(s));
+
+        // Fallback display id for legacy tickets with no ticketNumber.
+        tickets = tickets.map((t) => ({ ...t, ticketNumber: t.ticketNumber || `TKT-${String(t._id).slice(-4).toUpperCase()}` }));
+
+        // Stats across all tickets (unfiltered).
+        const all = await ticketModel.find({}, 'status createdAt').lean();
+        const startOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+        const thisMonth = (t) => new Date(t.createdAt) >= startOfMonth;
+        const stats = {
+            total: all.length,
+            open: all.filter((t) => t.status === 'open').length,
+            inProgress: all.filter((t) => t.status === 'pending').length,
+            resolved: all.filter((t) => t.status === 'resolved' && thisMonth(t)).length,
+            closed: all.filter((t) => t.status === 'closed' && thisMonth(t)).length,
+        };
+        res.json({ success: true, tickets, stats });
     } catch (error) {
         console.log(error);
         res.json({ success: false, message: error.message });

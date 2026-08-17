@@ -10,11 +10,17 @@ const reviewSchema = new mongoose.Schema({
     comment: { type: String, required: true },
     
     images: [{ type: String }],
-    
+    videos: [{ type: String }],
+    language: { type: String, default: 'English' },
+
     verifiedPurchase: { type: Boolean, default: false },
-    
+
     helpfulCount: { type: Number, default: 0 },
-    
+
+    reported: { type: Boolean, default: false },
+    reportReason: { type: String },
+    reportResolved: { type: Boolean, default: false },
+
     status: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
     
     adminResponse: {

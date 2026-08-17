@@ -39,7 +39,7 @@ const orderSchema = new mongoose.Schema({
     status: {
         type: String,
         enum: [
-            'Pending', 'Confirmed', 'Packed', 'Pickuped', 'Delivered', 'Cancelled', 'Returned', 'Refunded',
+            'Pending', 'Confirmed', 'Packed', 'Pickuped', 'Delivered', 'Completed', 'Cancelled', 'Returned', 'Exchange', 'Refunded',
             'Order Placed', 'Processing', 'Packing', 'Shipped', 'Out for delivery', 'Out for Delivery',
         ],
         default: 'Pending'
@@ -72,6 +72,22 @@ const orderSchema = new mongoose.Schema({
     inventoryReduced: { type: Boolean, default: false },
     isManual: { type: Boolean, default: false },   // created by admin
     customerId: { type: String },                  // denormalised display id
+
+    // Pending-stage reason (Admin Pending / Address Verification / Payment Verification…)
+    pendingReason: { type: String },
+    pendingNote: { type: String },
+
+    // Confirmed-stage barcode / SKU verification before dispatch.
+    barcodeVerification: {
+        verified: { type: Boolean, default: false },
+        codeType: { type: String, enum: ['sku', 'human', ''], default: '' },
+        code: { type: String },
+        at: { type: Date },
+        by: { type: String },
+    },
+
+    // Contact number added manually by admin when the account has none.
+    manualContact: { type: String },
 
     trackingNumber: { type: String },
 

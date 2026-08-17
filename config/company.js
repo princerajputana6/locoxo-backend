@@ -11,31 +11,31 @@
 const env = (k, fallback) => (process.env[k] && String(process.env[k]).trim()) || fallback
 
 const company = {
-    // Brand + legal entity
+    // Brand + legal entity (from GST Registration Certificate 03AANFL1410E1ZY)
     brand: 'LOCOXO',
-    legalName: env('COMPANY_LEGAL_NAME', 'Locoxo Retail Private Limited'), // TODO: exact registered name
+    legalName: env('COMPANY_LEGAL_NAME', 'LOCOXO APPARELS'),   // Partnership firm
 
     // Registered / manufacturer address (also the label's manufacturer block)
     address: {
-        line1: env('COMPANY_ADDR_LINE1', 'TODO: Registered office address line 1'),
-        line2: env('COMPANY_ADDR_LINE2', 'TODO: address line 2'),
-        city: env('COMPANY_CITY', 'New Delhi'),
-        state: env('COMPANY_STATE', 'Delhi'),
-        stateCode: env('COMPANY_STATE_CODE', '07'),   // GST state code (Delhi = 07)
-        pincode: env('COMPANY_PINCODE', '110001'),
+        line1: env('COMPANY_ADDR_LINE1', '2400/67, Friends Colony'),
+        line2: env('COMPANY_ADDR_LINE2', 'Street No.2, Badi Haibowal'),
+        city: env('COMPANY_CITY', 'Ludhiana'),
+        state: env('COMPANY_STATE', 'Punjab'),
+        stateCode: env('COMPANY_STATE_CODE', '03'),   // GST state code (Punjab = 03)
+        pincode: env('COMPANY_PINCODE', '141001'),
         country: env('COMPANY_COUNTRY', 'India'),
     },
 
     // Tax / statutory
-    gstin: env('COMPANY_GSTIN', 'TODO_GSTIN_15_CHARS'),        // TODO: 15-char GSTIN
+    gstin: env('COMPANY_GSTIN', '03AANFL1410E1ZY'),            // 15-char GSTIN
     hsnCode: env('PRODUCT_HSN_CODE', '61091000'),              // apparel default (T-shirts)
-    gstRate: Number(env('GST_RATE', '5')),                    // % — apparel ≤ ₹1000 is 5%
+    gstRate: Number(env('GST_RATE', '5')),                    // % — apparel ≤ ₹1000 is 5%, >₹1000 is 12%
     countryOfOrigin: env('COMPANY_COUNTRY', 'India'),
 
-    // Customer care (label + invoice footer)
+    // Customer care (label + invoice footer) — EDIT with Locoxo's real contacts.
     care: {
-        phone: env('SUPPORT_PHONE', '+91-00000-00000'),        // TODO
-        email: env('SUPPORT_EMAIL', 'care@locoxo.com'),        // TODO
+        phone: env('SUPPORT_PHONE', '+91-00000-00000'),        // TODO: customer-care phone
+        email: env('SUPPORT_EMAIL', 'care@locoxo.com'),        // TODO: customer-care email
         tollFree: env('SUPPORT_TOLLFREE', ''),                 // optional
     },
 

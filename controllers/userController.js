@@ -3,6 +3,9 @@ import bcrypt from "bcrypt"
 import jwt from 'jsonwebtoken'
 import crypto from 'crypto'
 import userModel from "../models/userModel.js";
+import orderModel from "../models/orderModel.js";
+import returnModel from "../models/returnModel.js";
+import { customerIdFor } from "../utils/orderNumber.js";
 import { sendOtp, checkOtp, normalisePhone } from "../services/twilioService.js";
 import { sendPasswordResetEmail, isConfigured as isEmailConfigured } from "../services/emailService.js";
 import { generateReferralCode, ensureReferralCode } from "../utils/referral.js";
@@ -403,4 +406,83 @@ const resetPassword = async (req, res) => {
     }
 };
 
-export { loginUser, registerUser, adminLogin, getAllCustomers, getUserProfile, updateUserProfile, googleAuth, addAddress, deleteAddress, sendLoginOtp, verifyLoginOtp, forgotPassword, resetPassword }
+// GET /api/user/customer/:id — full customer detail for the admin drawer:
+// profile + computed customer id + order/return history + wishlist + spend totals.
+const getCustomerDetail = async (req, res) => {
+    try {
+        const user = await userModel.findById(req.params.id)
+            .select('-password')
+            .populate('wishlist', 'name image price')
+            .lean()
+        if (!user) return res.json({ success: false, message: 'Customer not found' })
+
+        const orders = await orderModel.find({ userId: user._id }).sort({ date: -1 }).lean()
+        const returns = await returnModel.find({ userId: user._id }).populate('productId', 'name').sort({ createdAt: -1 }).lean()
+
+        const paidOrders = orders.filter((o) => o.status !== 'Cancelled')
+        const totalSpend = paidOrders.reduce((s, o) => s + (o.amount || 0), 0)
+
+        res.json({
+            success: true,
+            customer: {
+                ...user,
+                customerId: customerIdFor(user),
+                stats: {
+                    orders: orders.length,
+                    delivered: orders.filter((o) => o.status === 'Delivered').length,
+                    cancelled: orders.filter((o) => o.status === 'Cancelled').length,
+                    returns: returns.length,
+                    totalSpend,
+                    wishlist: (user.wishlist || []).length,
+                    cartItems: Object.keys(user.cartData || {}).length,
+                    addresses: (user.addresses || []).length,
+                },
+                orders,
+                returns,
+            },
+        })
+    } catch (error) {
+        console.log(error)
+        res.json({ success: false, message: error.message })
+    }
+}
+
+// PUT /api/user/customer/:id/block   body { blocked }
+const setCustomerBlock = async (req, res) => {
+    try {
+        const status = req.body.blocked ? 'blocked' : 'active'
+        const user = await userModel.findByIdAndUpdate(req.params.id, { status }, { new: true }).select('name status')
+        if (!user) return res.json({ success: false, message: 'Customer not found' })
+        res.json({ success: true, message: `Customer ${status === 'blocked' ? 'blocked' : 'unblocked'}`, status: user.status })
+    } catch (error) {
+        console.log(error)
+        res.json({ success: false, message: error.message })
+    }
+}
+
+// PUT /api/user/customer/:id/cod   body { codDisabled }
+const setCustomerCod = async (req, res) => {
+    try {
+        const codDisabled = !!req.body.codDisabled
+        const user = await userModel.findByIdAndUpdate(req.params.id, { codDisabled }, { new: true }).select('name codDisabled')
+        if (!user) return res.json({ success: false, message: 'Customer not found' })
+        res.json({ success: true, message: codDisabled ? 'COD disabled for customer' : 'COD enabled', codDisabled: user.codDisabled })
+    } catch (error) {
+        console.log(error)
+        res.json({ success: false, message: error.message })
+    }
+}
+
+// DELETE /api/user/customer/:id — remove a customer account.
+const deleteCustomer = async (req, res) => {
+    try {
+        const user = await userModel.findByIdAndDelete(req.params.id)
+        if (!user) return res.json({ success: false, message: 'Customer not found' })
+        res.json({ success: true, message: 'Customer removed' })
+    } catch (error) {
+        console.log(error)
+        res.json({ success: false, message: error.message })
+    }
+}
+
+export { loginUser, registerUser, adminLogin, getAllCustomers, getUserProfile, updateUserProfile, googleAuth, addAddress, deleteAddress, sendLoginOtp, verifyLoginOtp, forgotPassword, resetPassword, getCustomerDetail, setCustomerBlock, setCustomerCod, deleteCustomer }

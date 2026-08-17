@@ -519,4 +519,84 @@ const importExcel = async (req, res) => {
     }
 }
 
-export { listProducts, addProduct, removeProduct, singleProduct, getRelatedProducts, getRecentlyViewed, updateProduct, updateStock, setProductStatus, duplicateProduct, productDashboard, productsAddedReport, importExcel }
+// POST /api/product/add-colourwise — create a product from the colour-wise
+// Add Product form. Body: basic fields + `colours` JSON (metadata). Files:
+// c<ci>_img<ii> and c<ci>_vid<vi> per colour.
+const addProductColourwise = async (req, res) => {
+    try {
+        const b = req.body
+        if (!b.name) return res.json({ success: false, message: 'Product name is required' })
+        const coloursMeta = parseMaybe(b.colours, [])
+        if (!Array.isArray(coloursMeta) || coloursMeta.length === 0) {
+            return res.json({ success: false, message: 'Add at least one colour' })
+        }
+
+        // Index uploaded files by fieldname.
+        const filesByName = {}
+        for (const f of (req.files || [])) filesByName[f.fieldname] = f
+        if (req.files?.length) ensureCloudinary()
+
+        // Create the product shell first (so we have an id for the folder).
+        const product = new productModel({
+            name: b.name,
+            description: b.description || b.name,
+            productCode: b.productCode || undefined,
+            category: b.category || 'Uncategorized',
+            subCategory: b.subCategory || 'General',
+            audience: b.audience || undefined,
+            fabric: b.fabric || undefined,
+            neckType: b.neckType || undefined,
+            sleeve: b.sleeve || undefined,
+            pattern: b.pattern || undefined,
+            status: b.status || 'active',
+            price: Number(coloursMeta[0].mrp) || 0,
+            discountPrice: coloursMeta[0].sellingPrice ? Number(coloursMeta[0].sellingPrice) : undefined,
+            image: [],
+            colours: [],
+            variants: [],
+            sizes: [],
+            date: Date.now(),
+        })
+        await product.save()
+
+        const folder = `locoxo/products/${product._id}`
+        const upload = async (file, kind) => (await cloudinary.uploader.upload(file.path, { resource_type: kind, folder })).secure_url
+
+        const colours = []
+        const variants = []
+        const allSizes = new Set()
+        for (let ci = 0; ci < coloursMeta.length; ci++) {
+            const c = coloursMeta[ci]
+            const images = []
+            for (let ii = 0; ii < 10; ii++) { const f = filesByName[`c${ci}_img${ii}`]; if (f) images.push(await upload(f, 'image')) }
+            if (Array.isArray(c.imageUrls)) images.push(...c.imageUrls)
+            const videos = []
+            for (let vi = 0; vi < 3; vi++) { const f = filesByName[`c${ci}_vid${vi}`]; if (f) videos.push(await upload(f, 'video')) }
+            const sizes = Array.isArray(c.sizes) ? c.sizes : []
+            sizes.forEach((s) => allSizes.add(s))
+            colours.push({
+                color: c.color, colorCode: c.colorCode, images, videos, sizes,
+                mrp: Number(c.mrp) || 0, sellingPrice: c.sellingPrice ? Number(c.sellingPrice) : undefined,
+                discount: Number(c.discount) || 0, description: c.description,
+            })
+            // Build inventory variants (size × colour).
+            sizes.forEach((s) => variants.push({ size: s, color: c.color, colorCode: c.colorCode, stock: Number(c.stock) || 0 }))
+        }
+
+        product.colours = colours
+        product.variants = variants
+        product.sizes = [...allSizes]
+        product.image = colours[0]?.images?.length ? colours[0].images : ['https://placehold.co/600x800/EEF3F9/94A3B8?text=LOCOXO']
+        await product.save()
+
+        // Mark the product-code registry entry as used.
+        if (b.productCode) { try { (await import('../models/productCodeModel.js')).default.updateOne({ code: b.productCode }, { used: true }).catch(() => {}) } catch { /* ignore */ } }
+
+        res.json({ success: true, message: 'Product Added', productId: product._id, productCode: product.productCode })
+    } catch (error) {
+        console.log(error)
+        res.json({ success: false, message: error.message })
+    }
+}
+
+export { listProducts, addProduct, removeProduct, singleProduct, getRelatedProducts, getRecentlyViewed, updateProduct, updateStock, setProductStatus, duplicateProduct, productDashboard, productsAddedReport, importExcel, addProductColourwise }

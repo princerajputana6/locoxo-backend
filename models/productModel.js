@@ -18,6 +18,23 @@ const productSchema = new mongoose.Schema({
         label: { type: String },
         value: { type: String },
     }],
+    // Structured highlights (new design).
+    neckType: { type: String },
+    sleeve: { type: String },
+    pattern: { type: String },
+
+    // Colour-wise catalogue: each colour has its own media, sizes and pricing.
+    colours: [{
+        color: { type: String },
+        colorCode: { type: String },
+        images: [{ type: String }],
+        videos: [{ type: String }],
+        sizes: [{ type: String }],
+        mrp: { type: Number },
+        sellingPrice: { type: Number },
+        discount: { type: Number },
+        description: { type: String },
+    }],
 
     // Rich media: size-chart image, walk-through / 360 videos.
     sizeChart: { type: String },
@@ -68,7 +85,7 @@ const productSchema = new mongoose.Schema({
     
     tags: [{ type: String }],
     
-    status: { type: String, enum: ['active', 'inactive', 'out_of_stock', 'draft', 'hidden', 'coming_soon'], default: 'active' },
+    status: { type: String, enum: ['active', 'inactive', 'out_of_stock', 'draft', 'hidden', 'coming_soon', 'not_available', 'notify_me', 'saved', 'archived'], default: 'active' },
     
     viewCount: { type: Number, default: 0 },
     

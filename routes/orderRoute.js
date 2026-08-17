@@ -1,5 +1,5 @@
 import express from 'express'
-import {placeOrder, placeOrderStripe, placeOrderRazorpay, placeOrderCashfree, verifyCashfree, allOrders, userOrders, updateStatus, verifyStripe, verifyRazorpay, downloadInvoice, addOrderNote, setDelivery, createManualOrder, ordersReport, exportOrdersExcel} from '../controllers/orderController.js'
+import {placeOrder, placeOrderStripe, placeOrderRazorpay, placeOrderCashfree, verifyCashfree, allOrders, userOrders, updateStatus, verifyStripe, verifyRazorpay, downloadInvoice, addOrderNote, setDelivery, createManualOrder, ordersReport, exportOrdersExcel, setPendingReason, verifyBarcode} from '../controllers/orderController.js'
 import adminAuth  from '../middleware/adminAuth.js'
 import authUser from '../middleware/auth.js'
 
@@ -10,6 +10,8 @@ orderRouter.post('/list',adminAuth,allOrders)
 orderRouter.post('/status',adminAuth,updateStatus)
 orderRouter.post('/note',adminAuth,addOrderNote)
 orderRouter.post('/delivery',adminAuth,setDelivery)
+orderRouter.post('/pending-reason',adminAuth,setPendingReason)
+orderRouter.post('/verify-barcode',adminAuth,verifyBarcode)
 orderRouter.post('/manual',adminAuth,createManualOrder)
 orderRouter.get('/report',adminAuth,ordersReport)
 orderRouter.get('/export',adminAuth,exportOrdersExcel)

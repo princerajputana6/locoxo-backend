@@ -607,6 +607,39 @@ const createManualOrder = async (req, res) => {
     }
 }
 
+// POST /api/order/pending-reason  body { orderId, pendingReason, pendingNote }
+const setPendingReason = async (req, res) => {
+    try {
+        const { orderId, pendingReason, pendingNote } = req.body
+        const order = await orderModel.findByIdAndUpdate(orderId, { pendingReason, pendingNote }, { new: true })
+        if (!order) return res.json({ success: false, message: 'Order not found' })
+        res.json({ success: true, message: 'Pending reason saved', order })
+    } catch (error) { console.log(error); res.json({ success: false, message: error.message }) }
+}
+
+// POST /api/order/verify-barcode  body { orderId, codeType, code }
+// Verifies the product SKU / human-readable code before confirming dispatch.
+const verifyBarcode = async (req, res) => {
+    try {
+        const { orderId, codeType, code } = req.body
+        const order = await orderModel.findById(orderId)
+        if (!order) return res.json({ success: false, message: 'Order not found' })
+
+        // Match against any line item's product variant (sku / barcode / humanBarcode / productCode).
+        let matched = false
+        for (const it of (order.items || [])) {
+            const p = await productModel.findById(it.productId).lean()
+            if (!p) continue
+            if (p.productCode && String(p.productCode) === String(code)) { matched = true; break }
+            const v = (p.variants || []).find((v) => [v.sku, v.barcode, v.humanBarcode].map(String).includes(String(code)))
+            if (v) { matched = true; break }
+        }
+        order.barcodeVerification = { verified: matched, codeType, code, at: new Date(), by: req.adminEmail || 'admin' }
+        await order.save()
+        res.json({ success: matched, message: matched ? 'Code verified' : 'Code did not match any item', verification: order.barcodeVerification })
+    } catch (error) { console.log(error); res.json({ success: false, message: error.message }) }
+}
+
 // Orders report — grouped counts + revenue by day / week / month / year.
 const ordersReport = async (req, res) => {
     try {
@@ -700,4 +733,4 @@ const downloadInvoice = async (req, res) => {
     }
 };
 
-export {verifyRazorpay, verifyStripe ,placeOrder, placeOrderStripe, placeOrderRazorpay, placeOrderCashfree, verifyCashfree, allOrders, userOrders, updateStatus, downloadInvoice, addOrderNote, setDelivery, createManualOrder, ordersReport, exportOrdersExcel}
+export {verifyRazorpay, verifyStripe ,placeOrder, placeOrderStripe, placeOrderRazorpay, placeOrderCashfree, verifyCashfree, allOrders, userOrders, updateStatus, downloadInvoice, addOrderNote, setDelivery, createManualOrder, ordersReport, exportOrdersExcel, setPendingReason, verifyBarcode}

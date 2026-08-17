@@ -15,7 +15,12 @@ import {
     adjustVariant,
     stockHistory,
     inventoryProductDetail,
-    renderPriceTag
+    renderPriceTag,
+    createProductCode,
+    listProductCodes,
+    updateProductCodeEntry,
+    deleteProductCodeEntry,
+    inventoryOverview
 } from '../controllers/inventoryController.js'
 import adminAuth from '../middleware/adminAuth.js'
 import upload from '../middleware/multer.js'
@@ -45,6 +50,11 @@ inventoryRouter.post('/backfill-skus', adminAuth, backfillSkus)
 
 // Product code preview, restock / stock adjustment + history, dashboard detail
 inventoryRouter.get('/next-code', adminAuth, nextProductCode)
+inventoryRouter.get('/overview', adminAuth, inventoryOverview)
+inventoryRouter.get('/product-code', adminAuth, listProductCodes)
+inventoryRouter.post('/product-code', adminAuth, createProductCode)
+inventoryRouter.put('/product-code/:id', adminAuth, updateProductCodeEntry)
+inventoryRouter.delete('/product-code/:id', adminAuth, deleteProductCodeEntry)
 inventoryRouter.post('/restock/:id', adminAuth, restockVariant)
 inventoryRouter.post('/adjust/:id', adminAuth, adjustVariant)
 inventoryRouter.get('/history', adminAuth, stockHistory)

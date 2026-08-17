@@ -1,5 +1,5 @@
 import express from 'express'
-import { loginUser, registerUser, adminLogin, getAllCustomers, getUserProfile, updateUserProfile, googleAuth, addAddress, deleteAddress, sendLoginOtp, verifyLoginOtp, forgotPassword, resetPassword } from '../controllers/userController.js'
+import { loginUser, registerUser, adminLogin, getAllCustomers, getUserProfile, updateUserProfile, googleAuth, addAddress, deleteAddress, sendLoginOtp, verifyLoginOtp, forgotPassword, resetPassword, getCustomerDetail, setCustomerBlock, setCustomerCod, deleteCustomer } from '../controllers/userController.js'
 import adminAuth from '../middleware/adminAuth.js'
 import authUser from '../middleware/auth.js'
 
@@ -14,6 +14,10 @@ userRouter.post('/forgot-password', forgotPassword)
 userRouter.post('/reset-password', resetPassword)
 userRouter.post('/admin', adminLogin)
 userRouter.get('/customers', adminAuth, getAllCustomers)
+userRouter.get('/customer/:id', adminAuth, getCustomerDetail)
+userRouter.put('/customer/:id/block', adminAuth, setCustomerBlock)
+userRouter.put('/customer/:id/cod', adminAuth, setCustomerCod)
+userRouter.delete('/customer/:id', adminAuth, deleteCustomer)
 userRouter.get('/profile', authUser, getUserProfile)
 userRouter.put('/profile', authUser, updateUserProfile)
 userRouter.post('/address', authUser, addAddress)
