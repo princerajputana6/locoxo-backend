@@ -23,12 +23,13 @@ const addBanner = async (req, res) => {
         const b = req.body;
         const image = req.files?.image?.[0] || req.file;
         const video = req.files?.video?.[0];
-        if (!image && !video) return res.json({ success: false, message: 'Banner image or video is required' });
 
-        ensureCloudinary();
         let imageUrl = '', videoUrl = '';
-        if (image) imageUrl = (await cloudinary.uploader.upload(image.path, { resource_type: 'image' })).secure_url;
-        if (video) videoUrl = (await cloudinary.uploader.upload(video.path, { resource_type: 'video' })).secure_url;
+        if (image || video) {
+            ensureCloudinary();
+            if (image) imageUrl = (await cloudinary.uploader.upload(image.path, { resource_type: 'image' })).secure_url;
+            if (video) videoUrl = (await cloudinary.uploader.upload(video.path, { resource_type: 'video' })).secure_url;
+        }
 
         const banner = new bannerModel({
             title: b.title, subtitle: b.subtitle,

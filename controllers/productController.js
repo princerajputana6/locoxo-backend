@@ -119,15 +119,18 @@ const addProduct = async (req, res) => {
 // function for list product with filters
 const listProducts = async (req, res) => {
     try {
-        const { category, subCategory, minPrice, maxPrice, search, bestseller, featured, status, page = 1, limit = 20, sortBy = 'date' } = req.query;
-        
+        const { category, subCategory, minPrice, maxPrice, search, bestseller, featured, status, all, page = 1, limit = 20, sortBy = 'date' } = req.query;
+
         const filter = {};
-        
+
         if (category) filter.category = category;
         if (subCategory) filter.subCategory = subCategory;
         if (bestseller) filter.bestseller = bestseller === 'true';
         if (featured) filter.featured = featured === 'true';
         if (status) filter.status = status;
+        // Publish gate: customers (all !== 'true') only ever see published (active)
+        // products. Admin passes ?all=true to see every status (draft/hidden/…).
+        else if (all !== 'true') filter.status = 'active';
         
         if (minPrice || maxPrice) {
             filter.price = {};

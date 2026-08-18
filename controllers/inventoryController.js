@@ -119,7 +119,7 @@ export const bulkAddProducts = async (req, res) => {
                     variants,
                     brand: p.brand || 'LOCOXO',
                     image,
-                    status: p.status || 'active',
+                    status: p.status || 'draft', // stays hidden from storefront until the admin publishes it
                     lowStockThreshold: p.lowStockThreshold ?? 5,
                     date: Date.now(),
                 })
@@ -133,6 +133,8 @@ export const bulkAddProducts = async (req, res) => {
                         })
                     }
                 }
+                // Mark the chosen registry code as used so it drops from pickers.
+                if (p.productCode) { try { await productCodeModel.updateOne({ code: p.productCode }, { used: true }) } catch { /* ignore */ } }
                 created.push({ id: doc._id, name: doc.name, productCode: doc.productCode, variants: doc.variants.length })
             } catch (err) {
                 errors.push({ row: i + 1, name: p?.name, error: err.message })
@@ -545,13 +547,18 @@ export const nextProductCode = async (req, res) => {
 // POST /api/inventory/product-code  body { code?, category, fabric, shortDescription }
 export const createProductCode = async (req, res) => {
     try {
-        let { code, category, fabric, shortDescription } = req.body
+        let { code, category, subCategory, childCategory, categoryId, subCategoryId, childCategoryId, fabric, shortDescription } = req.body
+        if (!category) return res.json({ success: false, message: 'Select a category first' })
         if (!code || /automatic/i.test(code)) {
             const year = new Date().getFullYear()
             const seq = await nextSeq(`productCode:${year}`)
             code = buildProductCode(year, seq)
         }
-        const doc = await productCodeModel.create({ code, category, fabric, shortDescription })
+        const doc = await productCodeModel.create({
+            code, category, subCategory, childCategory,
+            categoryId: categoryId || undefined, subCategoryId: subCategoryId || undefined, childCategoryId: childCategoryId || undefined,
+            fabric, shortDescription,
+        })
         res.json({ success: true, message: 'Product code created', productCode: doc })
     } catch (error) {
         console.log(error)
