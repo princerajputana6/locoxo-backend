@@ -156,6 +156,96 @@ export const bulkAddProducts = async (req, res) => {
 // GET /api/inventory/barcodes/pdf?ids=&category=&search=&filter=
 // Streams a printable PDF sheet of barcodes + product details for the
 // selected / filtered products. One barcode card per variant.
+// ── Apparel price-tag (image 3 layout) ──────────────────────────────────────
+// One shared drawing routine so single AND bulk downloads render the exact same
+// garment hangtag (PRODUCT / NET QTY / SIZE / MRP / origin / manufacturer /
+// EAN-13 barcode / ARTICLE·MOD·COL·CAT·MAT·GEN + size).
+const APPAREL_TAG = { W: 165, H: 300, pad: 10 }
+const GEN_LABEL = { Male: 'MENS', Female: 'WOMENS', Unisex: 'UNISEX', Child: 'KIDS' }
+
+const drawApparelTag = (doc, product, v = {}, png, x0, y0) => {
+    const { W, H, pad } = APPAREL_TAG
+    const innerW = W - pad * 2
+    const LX = x0 + pad
+    doc.rect(x0 + 2, y0 + 2, W - 4, H - 4).lineWidth(0.8).strokeColor('#222').stroke()
+    let y = y0 + pad
+
+    const m = product.measurements || {}
+    const sizeLines = [
+        m.chest ? `Chest: ${m.chest}` : null,
+        m.neck ? `Neck: ${m.neck}` : null,
+        m.length ? `Length: ${m.length}` : null,
+        m.waist ? `Waist: ${m.waist}` : null,
+    ].filter(Boolean)
+    const mfgDate = product.manufactureDate
+        || new Date(product.createdAt || Date.now()).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' }).replace(' ', '-')
+
+    const line = (k, val, opt = {}) => {
+        doc.font('Helvetica-Bold').fontSize(opt.size || 7).fillColor('#111').text(`${k}`, LX, y, { width: innerW, continued: !!val })
+        if (val) doc.font('Helvetica').fillColor('#111').text(` ${val}`)
+        y = doc.y + (opt.gap ?? 3)
+    }
+
+    line('PRODUCT :', (product.productType || product.category || '').toUpperCase())
+    line('NET QUANTITY :', product.netQuantity || '1 N')
+
+    // SIZE block (with garment measurements if present)
+    doc.font('Helvetica-Bold').fontSize(7).fillColor('#111').text('SIZE :', LX, y, { width: innerW, continued: sizeLines.length > 0 })
+    if (sizeLines.length) {
+        doc.font('Helvetica').text(` ${sizeLines[0]}`)
+        for (let i = 1; i < sizeLines.length; i++) doc.font('Helvetica').fontSize(7).fillColor('#111').text(sizeLines[i], LX + 34, doc.y + 1, { width: innerW - 34 })
+    } else {
+        doc.font('Helvetica').text(` ${v.size || '—'}`)
+    }
+    y = doc.y + 6
+
+    // MRP (Helvetica has no ₹ glyph → "Rs." keeps every PDF reader/printer correct)
+    doc.font('Helvetica-Bold').fontSize(9).fillColor('#111').text(`MRP Rs. ${Number(product.price || 0).toFixed(2)}`, LX, y, { width: innerW })
+    doc.font('Helvetica').fontSize(6).fillColor('#444').text('incl. of all taxes', LX + 2, doc.y, { width: innerW })
+    y = doc.y + 6
+
+    line('COUNTRY OF ORIGIN :', (product.countryOfOrigin || company.countryOfOrigin || 'India').toUpperCase(), { size: 6.5, gap: 2 })
+    line('DATE OF MFG :', mfgDate, { size: 6.5, gap: 4 })
+
+    // Manufacturer + customer care
+    doc.font('Helvetica-Bold').fontSize(6).fillColor('#111').text('NAME & ADDRESS OF MANUFACTURER & CUSTOMER CARE:', LX, y, { width: innerW })
+    doc.font('Helvetica').fontSize(6).fillColor('#333')
+    const a = company.address
+    doc.text(company.legalName, LX, doc.y + 1, { width: innerW })
+    doc.text(`${a.line1}${a.line2 ? ', ' + a.line2 : ''}, ${a.city}, ${a.state} - ${a.pincode}`, LX, doc.y + 0.5, { width: innerW })
+    if (company.care.tollFree) doc.text(`Toll Free: ${company.care.tollFree}`, LX, doc.y + 0.5, { width: innerW })
+    doc.text(`Care: ${company.care.phone}  ${company.care.email}`, LX, doc.y + 0.5, { width: innerW })
+    y = doc.y + 5
+
+    // EAN-13 barcode
+    try { doc.image(png, LX, y, { width: innerW, height: 34, fit: [innerW, 34], align: 'center' }) } catch { /* ignore */ }
+    y += 40
+
+    // Attribute grid: ARTICLE / MOD / COL / CAT / MAT / GEN + size (right)
+    const attr = (k, val) => {
+        doc.font('Helvetica-Bold').fontSize(6.5).fillColor('#111').text(`${k} :`, LX, y, { width: innerW, continued: true })
+        doc.font('Helvetica').text(` ${val || '—'}`)
+        y = doc.y + 1.5
+    }
+    attr('ARTICLE NO', product.productCode)
+    attr('MOD', (product.productType || product.name || '').toString().toUpperCase().slice(0, 18))
+    attr('COL', (v.color || '').toUpperCase())
+    attr('CAT', (product.category || '').toUpperCase())
+    attr('MAT', (product.fabric || product.material || '').toUpperCase())
+    const genY = y
+    doc.font('Helvetica-Bold').fontSize(6.5).fillColor('#111').text('GEN :', LX, genY, { width: innerW / 2, continued: true })
+    doc.font('Helvetica').text(` ${GEN_LABEL[product.audience] || (product.audience || '').toUpperCase()}`)
+    doc.font('Helvetica-Bold').fontSize(9).fillColor('#111').text(String(v.size || '').toUpperCase(), LX, genY - 2, { width: innerW, align: 'right' })
+
+    return { W, H }
+}
+
+// Build the EAN-13 (or Code-128) barcode PNG for a variant/code.
+const barcodePng = (codeText) => bwipjs.toBuffer({ bcid: pickBcid(codeText), text: String(codeText), scale: 3, height: 14, includetext: true, textxalign: 'center', textsize: 8 })
+
+// GET /api/inventory/barcodes/pdf?ids=&category=&search=&filter=
+// A printable sheet of the SAME apparel price-tag as the single download,
+// tiled on A4 — one tag per variant.
 export const barcodeSheetPdf = async (req, res) => {
     try {
         const { ids, category, search, filter } = req.query
@@ -167,107 +257,54 @@ export const barcodeSheetPdf = async (req, res) => {
         let products = await productModel.find(dbQuery).lean()
 
         const q = (search || '').trim().toLowerCase()
-        if (q) {
-            products = products.filter((p) =>
-                `${p.name} ${p.brand || ''} ${p.category || ''}`.toLowerCase().includes(q)
-            )
-        }
+        if (q) products = products.filter((p) => `${p.name} ${p.brand || ''} ${p.category || ''}`.toLowerCase().includes(q))
 
-        // Build a Code-128-safe code from a product when it has no variant SKUs.
         const productCode = (p) => {
             const base = String(p.name || 'PRD').toUpperCase().replace(/[^A-Z0-9]+/g, '').slice(0, 8) || 'PRD'
             return `${base}-${p._id.toString().slice(-6).toUpperCase()}`
         }
 
-        // Flatten to variant cards, optionally filtering by stock state
-        const cards = []
+        // Flatten to one { product, variant } per printable tag.
+        const tags = []
         products.forEach((p) => {
             const threshold = p.lowStockThreshold ?? 5
             let added = 0
-                ; (p.variants || []).forEach((v) => {
-                    if (!v.sku) return
-                    if (filter === 'low' && !(v.stock <= threshold && v.stock > 0)) return
-                    if (filter === 'out' && v.stock > 0) return
-                    cards.push({
-                        name: p.name, price: p.price, category: p.category,
-                        size: v.size, color: v.color, sku: v.sku, stock: v.stock,
-                        barcode: v.barcode || v.sku, human: v.humanBarcode || '',
-                    })
-                    added++
-                })
-
-            // Fallback: a product with no SKU'd variants still gets one product-level
-            // barcode (so any selected product can be downloaded). Skipped for the
-            // stock-specific filters, which are inherently variant-level.
+            ;(p.variants || []).forEach((v) => {
+                if (!v.sku) return
+                if (filter === 'low' && !(v.stock <= threshold && v.stock > 0)) return
+                if (filter === 'out' && v.stock > 0) return
+                tags.push({ p, v }); added++
+            })
             if (added === 0 && filter !== 'low' && filter !== 'out') {
-                const totalStock = (p.variants || []).reduce((s, v) => s + (v.stock || 0), 0)
                 const pc = productCode(p)
-                cards.push({
-                    name: p.name, price: p.price, category: p.category,
-                    size: '—', color: '—', sku: pc, stock: totalStock,
-                    barcode: pc, human: '',
-                })
+                tags.push({ p, v: { size: '', color: '', sku: pc, barcode: pc } })
             }
         })
 
-        if (cards.length === 0) {
-            // 200 + JSON so the client can show a friendly message (blob content-type check)
-            return res.json({ success: false, message: 'No barcodes match the selected filters' })
-        }
+        if (tags.length === 0) return res.json({ success: false, message: 'No barcodes match the selected filters' })
 
-        // Pre-render barcode PNGs
-        const withImages = await Promise.all(cards.map(async (c) => {
-            const codeText = c.barcode || c.sku
-            const png = await bwipjs.toBuffer({
-                bcid: pickBcid(codeText), text: codeText, scale: 3, height: 12,
-                includetext: true, textxalign: 'center', textsize: 9,
-            })
-            return { ...c, png }
-        }))
+        const withImages = await Promise.all(tags.map(async (t) => ({ ...t, png: await barcodePng(t.v.barcode || t.v.sku) })))
 
         res.setHeader('Content-Type', 'application/pdf')
-        res.setHeader('Content-Disposition', `attachment; filename="locoxo-barcodes-${Date.now()}.pdf"`)
+        res.setHeader('Content-Disposition', `attachment; filename="locoxo-price-tags-${Date.now()}.pdf"`)
 
-        const doc = new PDFDocument({ size: 'A4', margin: 36 })
+        const doc = new PDFDocument({ size: 'A4', margin: 30 })
         doc.pipe(res)
 
-        // Title
-        doc.fontSize(18).fillColor('#062B52').text('LOCOXO — Barcode Sheet', { align: 'left' })
-        doc.fontSize(9).fillColor('#888').text(`${withImages.length} labels · generated ${new Date().toLocaleString()}`)
-        doc.moveDown(0.5)
-
-        const cols = 3
-        const gutter = 12
+        const { W, H } = APPAREL_TAG
+        const gutter = 14
         const startX = doc.page.margins.left
+        const startY = doc.page.margins.top
         const usableW = doc.page.width - doc.page.margins.left - doc.page.margins.right
-        const cardW = (usableW - gutter * (cols - 1)) / cols
-        const cardH = 120
-        let x = startX
-        let y = doc.y + 6
-        let col = 0
+        const cols = Math.max(1, Math.floor((usableW + gutter) / (W + gutter)))
+        let x = startX, y = startY, col = 0
 
-        withImages.forEach((c) => {
-            if (y + cardH > doc.page.height - doc.page.margins.bottom) {
-                doc.addPage(); y = doc.page.margins.top; x = startX; col = 0
-            }
-            // Card border
-            doc.roundedRect(x, y, cardW, cardH, 6).lineWidth(0.7).strokeColor('#dddddd').stroke()
-            // Details
-            doc.fillColor('#062B52').fontSize(9).font('Helvetica-Bold')
-                .text(c.name, x + 8, y + 8, { width: cardW - 16, height: 22, ellipsis: true })
-            doc.fillColor('#555').font('Helvetica').fontSize(8)
-                .text(`${c.size} · ${c.color}`, x + 8, y + 30, { width: cardW - 16 })
-            doc.fillColor('#0E4F86').font('Helvetica-Bold').fontSize(9)
-                .text(`Rs.${c.price}`, x + 8, y + 42, { width: cardW - 16 })
-            // Barcode
-            try {
-                doc.image(c.png, x + 8, y + 58, { width: cardW - 16, height: 44, fit: [cardW - 16, 44], align: 'center' })
-            } catch { /* skip bad image */ }
-            doc.fillColor('#999').fontSize(7).text(`Stock: ${c.stock}`, x + 8, y + cardH - 12, { width: cardW - 16 })
-
+        withImages.forEach((t) => {
+            if (y + H > doc.page.height - doc.page.margins.bottom) { doc.addPage(); x = startX; y = startY; col = 0 }
+            drawApparelTag(doc, t.p, t.v, t.png, x, y)
             col++
-            if (col >= cols) { col = 0; x = startX; y += cardH + gutter }
-            else { x += cardW + gutter }
+            if (col >= cols) { col = 0; x = startX; y += H + gutter }
+            else { x += W + gutter }
         })
 
         doc.end()
@@ -366,57 +403,23 @@ export const renderBarcodeLabel = async (req, res) => {
 // GET /api/inventory/label-pdf/:sku?name=&price=&size=&color=&stock=
 // A single printable barcode label as a PDF — the most portable format for
 // downloading/printing (opens & prints correctly in every OS and label app).
+// GET /api/inventory/label-pdf/:sku — single apparel price-tag (same layout as
+// the bulk sheet). Kept at this route so existing admin download buttons work.
 export const renderBarcodeLabelPdf = async (req, res) => {
     try {
         const { sku } = req.params
-        let { name = '', price = '', size = '', color = '', stock = '', code = '', human = '' } = req.query
-
-        if (!name || !code) {
-            const p = await productModel.findOne({ 'variants.sku': sku }).lean()
-            if (p) {
-                name = name || p.name; price = price || p.price
-                const v = (p.variants || []).find(v => v.sku === sku)
-                if (v) {
-                    size = size || v.size; color = color || v.color; stock = stock === '' ? v.stock : stock
-                    code = code || v.barcode || v.sku; human = human || v.humanBarcode || ''
-                }
-            }
-        }
-
-        const codeText = code || sku
-        const png = await bwipjs.toBuffer({
-            bcid: pickBcid(codeText), text: codeText, scale: 3, height: 12,
-            includetext: true, textxalign: 'center', textsize: 9,
-        })
+        const product = await productModel.findOne({ 'variants.sku': sku }).lean()
+        if (!product) return res.status(404).json({ success: false, message: 'Product not found for SKU' })
+        const v = (product.variants || []).find((x) => x.sku === sku) || {}
+        const png = await barcodePng(v.barcode || v.sku || sku)
 
         res.setHeader('Content-Type', 'application/pdf')
         res.setHeader('Content-Disposition', `attachment; filename="${sku}.pdf"`)
 
-        // A compact 60mm × 40mm label (points: 1mm ≈ 2.83465pt)
-        const W = 170, H = 113
-        const doc = new PDFDocument({ size: [W, H], margin: 8 })
+        const { W, H } = APPAREL_TAG
+        const doc = new PDFDocument({ size: [W, H], margin: 0 })
         doc.pipe(res)
-
-        const pad = 8
-        const innerW = W - pad * 2
-        doc.roundedRect(2, 2, W - 4, H - 4, 6).lineWidth(0.7).strokeColor('#e2e6ec').stroke()
-        doc.fillColor('#062B52').font('Helvetica-Bold').fontSize(9)
-            .text(String(name).slice(0, 30) || sku, pad, pad, { width: innerW, height: 22, ellipsis: true })
-        const hasVariant = size && size !== '—'
-        let cy = pad + 14
-        if (hasVariant) {
-            doc.fillColor('#5b6b80').font('Helvetica').fontSize(7.5)
-                .text(`${size}${color ? ' · ' + color : ''}`, pad, cy, { width: innerW })
-            cy += 11
-        }
-        doc.fillColor('#0E4F86').font('Helvetica-Bold').fontSize(9)
-            .text(`Rs.${price}`, pad, cy, { width: innerW })
-        try {
-            doc.image(png, pad, cy + 12, { width: innerW, height: 40, fit: [innerW, 40], align: 'center' })
-        } catch { /* skip bad image */ }
-        doc.fillColor('#94a3b8').font('Helvetica').fontSize(6.5)
-            .text(`Stock: ${stock}`, pad, H - pad - 8, { width: innerW, align: 'right' })
-
+        drawApparelTag(doc, product, v, png, 0, 0)
         doc.end()
     } catch (error) {
         console.log(error)
@@ -804,94 +807,15 @@ export const renderPriceTag = async (req, res) => {
         if (!product) return res.status(404).json({ success: false, message: 'Product not found for SKU' })
         const v = (product.variants || []).find((x) => x.sku === sku) || {}
 
-        const codeText = v.barcode || v.sku
-        const png = await bwipjs.toBuffer({
-            bcid: pickBcid(codeText), text: codeText, scale: 3, height: 14,
-            includetext: true, textxalign: 'center', textsize: 8,
-        })
-
-        const m = product.measurements || {}
-        const sizeLines = [
-            m.chest ? `Chest: ${m.chest}` : null,
-            m.neck ? `Neck: ${m.neck}` : null,
-            m.length ? `Length: ${m.length}` : null,
-            m.waist ? `Waist: ${m.waist}` : null,
-        ].filter(Boolean)
-        const mfgDate = product.manufactureDate
-            || new Date(product.createdAt || Date.now()).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' }).replace(' ', '-')
+        const png = await barcodePng(v.barcode || v.sku)
 
         res.setHeader('Content-Type', 'application/pdf')
         res.setHeader('Content-Disposition', `attachment; filename="pricetag-${sku}.pdf"`)
 
-        // Portrait garment tag, ~ 58mm x 92mm.
-        const W = 165, H = 300, pad = 10, innerW = W - pad * 2
+        const { W, H } = APPAREL_TAG
         const doc = new PDFDocument({ size: [W, H], margin: 0 })
         doc.pipe(res)
-        doc.rect(2, 2, W - 4, H - 4).lineWidth(0.8).strokeColor('#222').stroke()
-
-        let y = pad
-        const line = (k, val, opt = {}) => {
-            doc.font('Helvetica-Bold').fontSize(opt.size || 7).fillColor('#111')
-                .text(`${k}`, pad, y, { width: innerW, continued: !!val })
-            if (val) doc.font('Helvetica').fillColor('#111').text(` ${val}`)
-            y = doc.y + (opt.gap ?? 3)
-        }
-
-        line('PRODUCT :', (product.productType || product.category || '').toUpperCase())
-        line('NET QUANTITY :', product.netQuantity || '1 N')
-
-        // SIZE block (with measurements if present)
-        doc.font('Helvetica-Bold').fontSize(7).fillColor('#111').text('SIZE :', pad, y, { width: innerW, continued: sizeLines.length > 0 })
-        if (sizeLines.length) {
-            doc.font('Helvetica').text(` ${sizeLines[0]}`)
-            for (let i = 1; i < sizeLines.length; i++) {
-                doc.font('Helvetica').fontSize(7).fillColor('#111').text(sizeLines[i], pad + 34, doc.y + 1, { width: innerW - 34 })
-            }
-        } else {
-            doc.font('Helvetica').text(` ${v.size || '—'}`)
-        }
-        y = doc.y + 6
-
-        // MRP
-        doc.font('Helvetica-Bold').fontSize(9).fillColor('#111').text(`MRP ₹ ${Number(product.price || 0).toFixed(2)}`, pad, y, { width: innerW })
-        doc.font('Helvetica').fontSize(6).fillColor('#444').text('incl. of all taxes', pad + 2, doc.y, { width: innerW })
-        y = doc.y + 6
-
-        doc.font('Helvetica-Bold').fontSize(6.5).fillColor('#111')
-        line('COUNTRY OF ORIGIN :', (product.countryOfOrigin || company.countryOfOrigin || 'India').toUpperCase(), { size: 6.5, gap: 2 })
-        line('DATE OF MFG :', mfgDate, { size: 6.5, gap: 4 })
-
-        // Manufacturer + customer care
-        doc.font('Helvetica-Bold').fontSize(6).fillColor('#111').text('NAME & ADDRESS OF MANUFACTURER & CUSTOMER CARE:', pad, y, { width: innerW })
-        doc.font('Helvetica').fontSize(6).fillColor('#333')
-        const a = company.address
-        doc.text(company.legalName, pad, doc.y + 1, { width: innerW })
-        doc.text(`${a.line1}${a.line2 ? ', ' + a.line2 : ''}, ${a.city}, ${a.state} - ${a.pincode}`, pad, doc.y + 0.5, { width: innerW })
-        if (company.care.tollFree) doc.text(`Toll Free: ${company.care.tollFree}`, pad, doc.y + 0.5, { width: innerW })
-        doc.text(`Care: ${company.care.phone}  ${company.care.email}`, pad, doc.y + 0.5, { width: innerW })
-        y = doc.y + 5
-
-        // EAN-13 barcode
-        try { doc.image(png, pad, y, { width: innerW, height: 34, fit: [innerW, 34], align: 'center' }) } catch { /* ignore */ }
-        y += 40
-
-        // Attribute grid: ARTICLE / MOD / COL / CAT / MAT / GEN + size
-        const attr = (k, val) => {
-            doc.font('Helvetica-Bold').fontSize(6.5).fillColor('#111').text(`${k} :`, pad, y, { width: innerW, continued: true })
-            doc.font('Helvetica').text(` ${val || '—'}`)
-            y = doc.y + 1.5
-        }
-        attr('ARTICLE NO', product.productCode)
-        attr('MOD', (product.productType || product.name || '').toString().toUpperCase().slice(0, 18))
-        attr('COL', (v.color || '').toUpperCase())
-        attr('CAT', (product.category || '').toUpperCase())
-        attr('MAT', (product.fabric || product.material || '').toUpperCase())
-        // GEN + size on the same baseline (size aligned right, like the tag)
-        const genY = y
-        doc.font('Helvetica-Bold').fontSize(6.5).fillColor('#111').text('GEN :', pad, genY, { width: innerW / 2, continued: true })
-        doc.font('Helvetica').text(` ${(product.audience || '').toUpperCase()}`)
-        doc.font('Helvetica-Bold').fontSize(9).fillColor('#111').text(String(v.size || '').toUpperCase(), pad, genY - 2, { width: innerW, align: 'right' })
-
+        drawApparelTag(doc, product, v, png, 0, 0)
         doc.end()
     } catch (error) {
         console.log(error)

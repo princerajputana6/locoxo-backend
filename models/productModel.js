@@ -103,11 +103,14 @@ productSchema.pre('save', async function (next) {
             this.discountPercent = 0
         }
 
-        // Assign a sequential LX2026<NO> product code once, on creation.
+        // Safety-net auto code for a product saved without a registry code.
+        // Uses its OWN counter (productAutoSeq) + an "A" marker so it never
+        // consumes the Create-Product-Code registry sequence — otherwise the
+        // registry's "next code" preview would jump every time a product is saved.
         if (!this.productCode) {
             const year = new Date().getFullYear()
-            const seq = await nextSeq(`productCode:${year}`)
-            this.productCode = buildProductCode(year, seq)
+            const seq = await nextSeq(`productAutoSeq:${year}`)
+            this.productCode = `LX${year}A${String(seq).padStart(2, '0')}`
         }
 
         if (Array.isArray(this.variants)) {
