@@ -85,7 +85,9 @@ const productSchema = new mongoose.Schema({
     
     tags: [{ type: String }],
     
-    status: { type: String, enum: ['active', 'inactive', 'out_of_stock', 'draft', 'hidden', 'coming_soon', 'not_available', 'notify_me', 'saved', 'archived'], default: 'active' },
+    // 'pending' = added but awaiting admin approval; hidden from the storefront
+    // until the admin approves it (sets it 'active') from the Products page.
+    status: { type: String, enum: ['pending', 'active', 'inactive', 'out_of_stock', 'draft', 'hidden', 'coming_soon', 'not_available', 'notify_me', 'saved', 'archived'], default: 'pending' },
     
     viewCount: { type: Number, default: 0 },
     

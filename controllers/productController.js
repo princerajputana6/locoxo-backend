@@ -77,7 +77,10 @@ const addProduct = async (req, res) => {
         if (!data.name || data.price === undefined) {
             return res.json({ success: false, message: 'Name and MRP (price) are required' })
         }
-        data.status = data.status || 'active'
+        // Approval gate: a newly-added product is never published straight to the
+        // storefront. It starts 'pending' (or 'draft' if saved as draft) and the
+        // admin must approve it from the Products page to make it 'active'.
+        data.status = (data.status && data.status !== 'active') ? data.status : 'pending'
         data.image = []
         data.date = Date.now()
 
@@ -328,7 +331,7 @@ const setProductStatus = async (req, res) => {
     try {
         const { id } = req.params
         const { status } = req.body
-        const allowed = ['active', 'inactive', 'out_of_stock', 'draft', 'hidden', 'coming_soon']
+        const allowed = ['pending', 'active', 'inactive', 'out_of_stock', 'draft', 'hidden', 'coming_soon']
         if (!allowed.includes(status)) return res.json({ success: false, message: 'Invalid status' })
         const product = await productModel.findByIdAndUpdate(id, { status }, { new: true })
         if (!product) return res.json({ success: false, message: 'Product not found' })
@@ -551,7 +554,8 @@ const addProductColourwise = async (req, res) => {
             neckType: b.neckType || undefined,
             sleeve: b.sleeve || undefined,
             pattern: b.pattern || undefined,
-            status: b.status || 'active',
+            // Approval gate — never publish on creation; admin approves later.
+            status: (b.status && b.status !== 'active') ? b.status : 'pending',
             price: Number(coloursMeta[0].mrp) || 0,
             discountPrice: coloursMeta[0].sellingPrice ? Number(coloursMeta[0].sellingPrice) : undefined,
             image: [],

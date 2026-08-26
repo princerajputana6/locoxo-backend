@@ -119,7 +119,7 @@ export const bulkAddProducts = async (req, res) => {
                     variants,
                     brand: p.brand || 'LOCOXO',
                     image,
-                    status: p.status || 'draft', // stays hidden from storefront until the admin publishes it
+                    status: p.status || 'pending', // awaits admin approval; hidden from storefront until approved
                     lowStockThreshold: p.lowStockThreshold ?? 5,
                     date: Date.now(),
                 })

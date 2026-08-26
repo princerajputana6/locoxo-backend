@@ -48,13 +48,15 @@ const publicSections = async (req, res) => {
     try {
         const now = new Date();
         const all = await merchandisingModel.find({ status: { $in: ['active', 'scheduled'] } })
-            .populate('products', 'name image price discountPrice rating').sort({ rank: 1 }).lean();
+            .populate('products', 'name image price discountPrice rating status').sort({ rank: 1 }).lean();
         const live = all.filter((s) => {
             if (s.status === 'active') return true;
             const startOk = !s.scheduleStart || new Date(s.scheduleStart) <= now;
             const endOk = !s.scheduleEnd || new Date(s.scheduleEnd) >= now;
             return startOk && endOk;
-        });
+        // Only approved (active) products surface on the storefront, even if a
+        // section still references pending/draft ones.
+        }).map((s) => ({ ...s, products: (s.products || []).filter((p) => p && p.status === 'active') }));
         res.json({ success: true, sections: live });
     } catch (error) { console.log(error); res.json({ success: false, message: error.message }); }
 };
