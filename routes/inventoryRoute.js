@@ -22,6 +22,15 @@ import {
     deleteProductCodeEntry,
     inventoryOverview
 } from '../controllers/inventoryController.js'
+import {
+    addInventoryItems,
+    listInventory,
+    updateInventoryItem,
+    deleteInventoryItem,
+    adjustInventoryStock,
+    codesWithInventory,
+    inventoryByCode,
+} from '../controllers/inventoryItemController.js'
 import adminAuth from '../middleware/adminAuth.js'
 import upload from '../middleware/multer.js'
 
@@ -49,6 +58,15 @@ inventoryRouter.put('/threshold/:id', adminAuth, updateThreshold)
 inventoryRouter.post('/backfill-skus', adminAuth, backfillSkus)
 
 // Product code preview, restock / stock adjustment + history, dashboard detail
+// ── Separate INVENTORY (stock by product code) ──────────────────────────────
+inventoryRouter.post('/items/bulk-add', adminAuth, upload.any(), addInventoryItems)
+inventoryRouter.get('/items', adminAuth, listInventory)
+inventoryRouter.get('/items/by-code/:code', adminAuth, inventoryByCode)
+inventoryRouter.post('/items/adjust/:id', adminAuth, adjustInventoryStock)
+inventoryRouter.put('/items/:id', adminAuth, updateInventoryItem)
+inventoryRouter.delete('/items/:id', adminAuth, deleteInventoryItem)
+inventoryRouter.get('/codes-with-stock', adminAuth, codesWithInventory)
+
 inventoryRouter.get('/next-code', adminAuth, nextProductCode)
 inventoryRouter.get('/overview', adminAuth, inventoryOverview)
 inventoryRouter.get('/product-code', adminAuth, listProductCodes)
