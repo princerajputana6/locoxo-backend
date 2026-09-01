@@ -32,6 +32,14 @@ const fieldsFromBody = (body) => {
     if (body.scheduleEnd !== undefined) out.scheduleEnd = body.scheduleEnd || null;
     if (body.rank !== undefined) out.rank = Number(body.rank) || 0;
     if (body.products !== undefined) out.products = parseMaybe(body.products, []);
+    // Section content type + layout + card placement.
+    if (body.contentType !== undefined) out.contentType = body.contentType;
+    if (body.categories !== undefined) out.categories = parseMaybe(body.categories, []);
+    if (body.combos !== undefined) out.combos = parseMaybe(body.combos, []);
+    if (body.layout !== undefined) out.layout = body.layout;
+    if (body.cardsDesktop !== undefined) out.cardsDesktop = Number(body.cardsDesktop) || 4;
+    if (body.cardsTablet !== undefined) out.cardsTablet = Number(body.cardsTablet) || 3;
+    if (body.cardsMobile !== undefined) out.cardsMobile = Number(body.cardsMobile) || 2;
     return out;
 };
 
@@ -48,7 +56,9 @@ const publicSections = async (req, res) => {
     try {
         const now = new Date();
         const all = await merchandisingModel.find({ status: { $in: ['active', 'scheduled'] } })
-            .populate('products', 'name image price discountPrice rating status').sort({ rank: 1 }).lean();
+            .populate('products', 'name image price discountPrice rating status')
+            .populate('combos.products', 'name image price discountPrice status')
+            .sort({ rank: 1 }).lean();
         const live = all.filter((s) => {
             if (s.status === 'active') return true;
             const startOk = !s.scheduleStart || new Date(s.scheduleStart) <= now;

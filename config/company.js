@@ -34,8 +34,8 @@ const company = {
 
     // Customer care (label + invoice footer) — EDIT with Locoxo's real contacts.
     care: {
-        phone: env('SUPPORT_PHONE', '+91-00000-00000'),        // TODO: customer-care phone
-        email: env('SUPPORT_EMAIL', 'care@locoxo.com'),        // TODO: customer-care email
+        phone: env('SUPPORT_PHONE', '+91 88245 89682'),        // customer-care phone
+        email: env('SUPPORT_EMAIL', 'support@locoxo.com'),     // customer-care email
         tollFree: env('SUPPORT_TOLLFREE', ''),                 // optional
     },
 

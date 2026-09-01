@@ -16,6 +16,8 @@ import {
     stockHistory,
     inventoryProductDetail,
     renderPriceTag,
+    inventoryItemLabelPdf,
+    inventoryBarcodeSheetPdf,
     createProductCode,
     listProductCodes,
     updateProductCodeEntry,
@@ -60,6 +62,8 @@ inventoryRouter.post('/backfill-skus', adminAuth, backfillSkus)
 // Product code preview, restock / stock adjustment + history, dashboard detail
 // ── Separate INVENTORY (stock by product code) ──────────────────────────────
 inventoryRouter.post('/items/bulk-add', adminAuth, upload.any(), addInventoryItems)
+inventoryRouter.get('/items/label-pdf/:id', inventoryItemLabelPdf)
+inventoryRouter.get('/items/barcodes/pdf', adminAuth, inventoryBarcodeSheetPdf)
 inventoryRouter.get('/items', adminAuth, listInventory)
 inventoryRouter.get('/items/by-code/:code', adminAuth, inventoryByCode)
 inventoryRouter.post('/items/adjust/:id', adminAuth, adjustInventoryStock)

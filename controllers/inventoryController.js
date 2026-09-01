@@ -8,7 +8,14 @@ import stockAdjustmentModel from '../models/stockAdjustmentModel.js'
 import { peekSeq, nextSeq } from '../models/counterModel.js'
 import { productCode as buildProductCode } from '../utils/barcode.js'
 import productCodeModel from '../models/productCodeModel.js'
+import inventoryItemModel from '../models/inventoryItemModel.js'
 import company from '../config/company.js'
+import path from 'path'
+import fs from 'fs'
+import { fileURLToPath } from 'url'
+
+const LOGO_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'assets', 'logo.png')
+const HAS_LOGO = (() => { try { return fs.existsSync(LOGO_PATH) } catch { return false } })()
 
 const PLACEHOLDER_IMG = 'https://placehold.co/600x800/0E4F86/FFFFFF?text=LOCOXO'
 
@@ -160,8 +167,7 @@ export const bulkAddProducts = async (req, res) => {
 // One shared drawing routine so single AND bulk downloads render the exact same
 // garment hangtag (PRODUCT / NET QTY / SIZE / MRP / origin / manufacturer /
 // EAN-13 barcode / ARTICLE·MOD·COL·CAT·MAT·GEN + size).
-const APPAREL_TAG = { W: 165, H: 300, pad: 10 }
-const GEN_LABEL = { Male: 'MENS', Female: 'WOMENS', Unisex: 'UNISEX', Child: 'KIDS' }
+const APPAREL_TAG = { W: 165, H: 340, pad: 10 }
 
 const drawApparelTag = (doc, product, v = {}, png, x0, y0) => {
     const { W, H, pad } = APPAREL_TAG
@@ -169,6 +175,15 @@ const drawApparelTag = (doc, product, v = {}, png, x0, y0) => {
     const LX = x0 + pad
     doc.rect(x0 + 2, y0 + 2, W - 4, H - 4).lineWidth(0.8).strokeColor('#222').stroke()
     let y = y0 + pad
+
+    // Brand logo on top (centred). Falls back to a text wordmark if missing.
+    if (HAS_LOGO) {
+        try { doc.image(LOGO_PATH, x0 + (W - 54) / 2, y, { width: 54, height: 18, fit: [54, 18], align: 'center' }) } catch { /* ignore */ }
+        y += 22
+    } else {
+        doc.font('Helvetica-Bold').fontSize(12).fillColor('#0E4F86').text('LOCOXO', LX, y, { width: innerW, align: 'center' }); y = doc.y + 4
+    }
+    doc.moveTo(LX, y).lineTo(LX + innerW, y).lineWidth(0.5).strokeColor('#e2e6ec').stroke(); y += 5
 
     const m = product.measurements || {}
     const sizeLines = [
@@ -214,10 +229,13 @@ const drawApparelTag = (doc, product, v = {}, png, x0, y0) => {
     doc.text(company.legalName, LX, doc.y + 1, { width: innerW })
     doc.text(`${a.line1}${a.line2 ? ', ' + a.line2 : ''}, ${a.city}, ${a.state} - ${a.pincode}`, LX, doc.y + 0.5, { width: innerW })
     if (company.care.tollFree) doc.text(`Toll Free: ${company.care.tollFree}`, LX, doc.y + 0.5, { width: innerW })
-    doc.text(`Care: ${company.care.phone}  ${company.care.email}`, LX, doc.y + 0.5, { width: innerW })
+    doc.text(`Mobile: ${company.care.phone}`, LX, doc.y + 0.5, { width: innerW })
+    doc.text(`Email: ${company.care.email}`, LX, doc.y + 0.5, { width: innerW })
     y = doc.y + 5
 
-    // EAN-13 barcode
+    // Human-readable code BEFORE the barcode, then the barcode itself.
+    const human = v.humanBarcode || v.barcode || product.productCode || ''
+    if (human) { doc.font('Helvetica-Bold').fontSize(7).fillColor('#111').text(human, LX, y, { width: innerW, align: 'center' }); y = doc.y + 2 }
     try { doc.image(png, LX, y, { width: innerW, height: 34, fit: [innerW, 34], align: 'center' }) } catch { /* ignore */ }
     y += 40
 
@@ -232,16 +250,67 @@ const drawApparelTag = (doc, product, v = {}, png, x0, y0) => {
     attr('COL', (v.color || '').toUpperCase())
     attr('CAT', (product.category || '').toUpperCase())
     attr('MAT', (product.fabric || product.material || '').toUpperCase())
-    const genY = y
-    doc.font('Helvetica-Bold').fontSize(6.5).fillColor('#111').text('GEN :', LX, genY, { width: innerW / 2, continued: true })
-    doc.font('Helvetica').text(` ${GEN_LABEL[product.audience] || (product.audience || '').toUpperCase()}`)
-    doc.font('Helvetica-Bold').fontSize(9).fillColor('#111').text(String(v.size || '').toUpperCase(), LX, genY - 2, { width: innerW, align: 'right' })
+    // SIZE in place of GEN, emphasised on the right like a garment tag.
+    const sizeY = y
+    doc.font('Helvetica-Bold').fontSize(6.5).fillColor('#111').text('SIZE :', LX, sizeY, { width: innerW / 2, continued: true })
+    doc.font('Helvetica').text(` ${String(v.size || '—').toUpperCase()}`)
+    doc.font('Helvetica-Bold').fontSize(11).fillColor('#111').text(String(v.size || '').toUpperCase(), LX, sizeY - 3, { width: innerW, align: 'right' })
 
     return { W, H }
 }
 
 // Build the EAN-13 (or Code-128) barcode PNG for a variant/code.
 const barcodePng = (codeText) => bwipjs.toBuffer({ bcid: pickBcid(codeText), text: String(codeText), scale: 3, height: 14, includetext: true, textxalign: 'center', textsize: 8 })
+
+// ── Barcode / price-tag PDFs for INVENTORY items (stock is separate from products) ──
+// Shape an inventory item into the product/variant objects drawApparelTag expects.
+const invToProduct = (it) => ({
+    productType: it.category, category: it.category, subCategory: it.subCategory, childCategory: it.childCategory,
+    fabric: it.fabric, material: it.fabric, price: it.mrp, productCode: it.productCode, name: it.name || it.productCode,
+    measurements: {}, netQuantity: '1 N', countryOfOrigin: company.countryOfOrigin || 'India',
+})
+const invVariant = (it) => ({ size: it.size, color: it.color, sku: it.sku, barcode: it.barcode, humanBarcode: it.humanBarcode })
+
+// GET /api/inventory/items/label-pdf/:id — one apparel price-tag for an inventory item.
+export const inventoryItemLabelPdf = async (req, res) => {
+    try {
+        const it = await inventoryItemModel.findById(req.params.id).lean()
+        if (!it) return res.status(404).json({ success: false, message: 'Inventory item not found' })
+        const png = await barcodePng(it.barcode || it.sku || it.productCode)
+        res.setHeader('Content-Type', 'application/pdf')
+        res.setHeader('Content-Disposition', `attachment; filename="${it.productCode}-${it.size}-${it.color}.pdf"`)
+        const { W, H } = APPAREL_TAG
+        const doc = new PDFDocument({ size: [W, H], margin: 0 }); doc.pipe(res)
+        drawApparelTag(doc, invToProduct(it), invVariant(it), png, 0, 0); doc.end()
+    } catch (e) { console.log(e); if (!res.headersSent) res.status(400).json({ success: false, message: e.message }) }
+}
+
+// GET /api/inventory/items/barcodes/pdf?ids=&code= — tiled tags (whole code or a selection).
+export const inventoryBarcodeSheetPdf = async (req, res) => {
+    try {
+        const { ids, code } = req.query
+        const q = {}
+        if (ids) q._id = { $in: ids.split(',').filter(Boolean) }
+        else if (code) q.productCode = code
+        const items = await inventoryItemModel.find(q).lean()
+        if (!items.length) return res.json({ success: false, message: 'No inventory to print' })
+        const withPng = await Promise.all(items.map(async (it) => ({ it, png: await barcodePng(it.barcode || it.sku || it.productCode) })))
+        res.setHeader('Content-Type', 'application/pdf')
+        res.setHeader('Content-Disposition', `attachment; filename="barcodes-${Date.now()}.pdf"`)
+        const doc = new PDFDocument({ size: 'A4', margin: 30 }); doc.pipe(res)
+        const { W, H } = APPAREL_TAG, gutter = 14
+        const startX = doc.page.margins.left, startY = doc.page.margins.top
+        const usableW = doc.page.width - doc.page.margins.left - doc.page.margins.right
+        const cols = Math.max(1, Math.floor((usableW + gutter) / (W + gutter)))
+        let x = startX, y = startY, col = 0
+        withPng.forEach(({ it, png }) => {
+            if (y + H > doc.page.height - doc.page.margins.bottom) { doc.addPage(); x = startX; y = startY; col = 0 }
+            drawApparelTag(doc, invToProduct(it), invVariant(it), png, x, y)
+            col++; if (col >= cols) { col = 0; x = startX; y += H + gutter } else { x += W + gutter }
+        })
+        doc.end()
+    } catch (e) { console.log(e); if (!res.headersSent) res.status(500).json({ success: false, message: e.message }) }
+}
 
 // GET /api/inventory/barcodes/pdf?ids=&category=&search=&filter=
 // A printable sheet of the SAME apparel price-tag as the single download,
