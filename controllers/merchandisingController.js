@@ -40,6 +40,7 @@ const fieldsFromBody = (body) => {
     if (body.cardsDesktop !== undefined) out.cardsDesktop = Number(body.cardsDesktop) || 4;
     if (body.cardsTablet !== undefined) out.cardsTablet = Number(body.cardsTablet) || 3;
     if (body.cardsMobile !== undefined) out.cardsMobile = Number(body.cardsMobile) || 2;
+    if (body.heroSlides !== undefined) out.heroSlides = parseMaybe(body.heroSlides, []).map(Number).filter((n) => n > 0);
     return out;
 };
 

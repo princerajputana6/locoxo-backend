@@ -33,10 +33,14 @@ const merchandisingSchema = new mongoose.Schema({
     }],
 
     // Card layout / placement controls.
-    layout: { type: String, enum: ['grid', 'slider'], default: 'grid' },
+    //  grid   → cards wrap in a grid
+    //  slider → horizontal scroller
+    //  hero   → full-height category slider; each slide shows heroSlides[i] categories
+    layout: { type: String, enum: ['grid', 'slider', 'hero'], default: 'grid' },
     cardsDesktop: { type: Number, default: 4 },           // cards per row on desktop
     cardsTablet: { type: Number, default: 3 },
     cardsMobile: { type: Number, default: 2 },
+    heroSlides: [{ type: Number }],                       // e.g. [3,1,2] categories per hero slide
 
     // Media — high-quality banners (1–2), a mobile/tablet variant, video + thumbnail.
     bannerImages: [{ type: String }],
