@@ -126,6 +126,12 @@ app.get('/',(req,res)=>{
     res.send("API Working")
 })
 
+// Lightweight health check (no DB work) — used by keep-warm pingers so the
+// Render free instance never idles into a cold start.
+app.get('/health',(req,res)=>{
+    res.json({ success: true, status: 'ok', uptime: Math.round(process.uptime()), ts: Date.now() })
+})
+
 // JSON error handler — turns upload errors (multer file-size / wrong-type) and
 // other thrown errors into a clean { success:false, message } the UI can show.
 app.use((err, req, res, next) => {

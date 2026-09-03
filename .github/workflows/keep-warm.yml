@@ -1,0 +1,20 @@
+name: Keep backend warm
+
+# Render's free instance sleeps after ~15 min of no traffic and then takes
+# ~30-50s to cold-start on the next request. This scheduled ping hits the
+# lightweight /health endpoint every ~13 min so the API stays warm and fast.
+# (Free & unlimited for public repos. Trigger manually anytime via "Run workflow".)
+
+on:
+  schedule:
+    - cron: '*/13 * * * *'
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping /health
+        run: |
+          echo "Pinging backend at $(date -u)"
+          curl -fsS --max-time 60 https://locoxo-backend.onrender.com/health || echo "ping failed (backend may be waking)"
