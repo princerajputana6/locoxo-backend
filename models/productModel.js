@@ -144,6 +144,8 @@ productSchema.pre('save', async function (next) {
     }
 })
 
+productSchema.index({ status: 1 })
+productSchema.index({ category: 1 })
 const productModel  = mongoose.models.product || mongoose.model("product",productSchema);
 
 export default productModel

@@ -57,6 +57,7 @@ const merchandisingSchema = new mongoose.Schema({
     rank: { type: Number, default: 0 },                  // display order (drag & drop)
 }, { timestamps: true });                                // updatedAt = last modification date
 
+merchandisingSchema.index({ status: 1, rank: 1 })
 const merchandisingModel = mongoose.models.merchandising || mongoose.model('merchandising', merchandisingSchema);
 
 export default merchandisingModel;

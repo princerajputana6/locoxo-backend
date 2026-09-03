@@ -1,6 +1,7 @@
 import { v2 as cloudinary } from 'cloudinary';
 import { ensureCloudinary } from '../config/cloudinary.js';
 import merchandisingModel from '../models/merchandisingModel.js';
+import categoryModel from '../models/categoryModel.js';
 
 const parseMaybe = (v, fallback) => {
     if (v === undefined || v === null || v === '') return fallback;
@@ -68,6 +69,23 @@ const publicSections = async (req, res) => {
         // Only approved (active) products surface on the storefront, even if a
         // section still references pending/draft ones.
         }).map((s) => ({ ...s, products: (s.products || []).filter((p) => p && p.status === 'active') }));
+
+        // Sync category-card images/links with the LIVE category record (by name),
+        // so a category's image set in the admin flows to every storefront card.
+        const needsCats = live.some((s) => (s.categories || []).length);
+        if (needsCats) {
+            const cats = await categoryModel.find({ status: 'active' }, 'name image banner').lean();
+            const imgByName = {};
+            cats.forEach((c) => { imgByName[(c.name || '').toLowerCase()] = c.image || c.banner || '' });
+            live.forEach((s) => {
+                if ((s.categories || []).length) {
+                    s.categories = s.categories.map((cc) => {
+                        const live = imgByName[(cc.name || '').toLowerCase()]
+                        return { ...cc, image: live || cc.image }  // live category image wins, card image is fallback
+                    })
+                }
+            })
+        }
         res.json({ success: true, sections: live });
     } catch (error) { console.log(error); res.json({ success: false, message: error.message }); }
 };

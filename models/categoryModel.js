@@ -53,6 +53,8 @@ categorySchema.pre('save', async function(next) {
     } catch (err) { next(err); }
 });
 
+categorySchema.index({ status: 1 })
+categorySchema.index({ parentCategory: 1 })
 const categoryModel = mongoose.models.category || mongoose.model('category', categorySchema);
 
 export default categoryModel;
