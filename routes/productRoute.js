@@ -1,5 +1,5 @@
 import express from 'express'
-import { listProducts, addProduct, removeProduct, singleProduct, getRelatedProducts, getRecentlyViewed, updateProduct, updateStock, setProductStatus, duplicateProduct, productDashboard, productsAddedReport, importExcel, addProductColourwise } from '../controllers/productController.js'
+import { listProducts, addProduct, removeProduct, singleProduct, getRelatedProducts, getRecentlyViewed, updateProduct, updateStock, setProductStatus, duplicateProduct, productDashboard, productsAddedReport, importExcel, addProductColourwise, updateProductColourwise } from '../controllers/productController.js'
 import { uploadMedia, uploadImport } from '../middleware/multer.js';
 import adminAuth from '../middleware/adminAuth.js';
 
@@ -15,6 +15,7 @@ const productMedia = uploadMedia.fields([
 
 productRouter.post('/add', adminAuth, productMedia, addProduct);
 productRouter.post('/add-colourwise', adminAuth, uploadMedia.any(), addProductColourwise);
+productRouter.put('/update-colourwise/:id', adminAuth, uploadMedia.any(), updateProductColourwise);
 productRouter.post('/remove', adminAuth, removeProduct);
 productRouter.put('/update/:id', adminAuth, productMedia, updateProduct);
 productRouter.put('/status/:id', adminAuth, setProductStatus);

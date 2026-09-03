@@ -606,4 +606,69 @@ const addProductColourwise = async (req, res) => {
     }
 }
 
-export { listProducts, addProduct, removeProduct, singleProduct, getRelatedProducts, getRecentlyViewed, updateProduct, updateStock, setProductStatus, duplicateProduct, productDashboard, productsAddedReport, importExcel, addProductColourwise }
+// PUT /api/product/update-colourwise/:id — edit a colour-wise product. Keeps
+// existing images (passed as colour.imageUrls) + appends new files, and
+// preserves existing variant stock/sku/barcode for unchanged size×colour combos.
+const updateProductColourwise = async (req, res) => {
+    try {
+        const { id } = req.params
+        const b = req.body
+        const product = await productModel.findById(id)
+        if (!product) return res.json({ success: false, message: 'Product not found' })
+        const coloursMeta = parseMaybe(b.colours, [])
+        if (!Array.isArray(coloursMeta) || coloursMeta.length === 0) return res.json({ success: false, message: 'Add at least one colour' })
+
+        const filesByName = {}
+        for (const f of (req.files || [])) filesByName[f.fieldname] = f
+        if (req.files?.length) ensureCloudinary()
+
+        if (b.name) product.name = b.name
+        if (b.description) product.description = b.description
+        if (b.category) product.category = b.category
+        if (b.subCategory) product.subCategory = b.subCategory
+        if (b.childCategory !== undefined) product.childCategory = b.childCategory
+        if (b.fabric !== undefined) product.fabric = b.fabric
+        if (b.neckType !== undefined) product.neckType = b.neckType
+        if (b.sleeve !== undefined) product.sleeve = b.sleeve
+        if (b.pattern !== undefined) product.pattern = b.pattern
+        if (b.status) product.status = b.status
+        if (b.productCode) product.productCode = b.productCode
+
+        const folder = `locoxo/products/${product._id}`
+        const upload = async (file, kind) => (await cloudinary.uploader.upload(file.path, { resource_type: kind, folder })).secure_url
+
+        const prevVariants = (product.variants || []).map((v) => (v.toObject ? v.toObject() : v))
+        const findV = (size, color) => prevVariants.find((v) => v.size === size && v.color === color)
+
+        const colours = [], variants = [], allSizes = new Set()
+        for (let ci = 0; ci < coloursMeta.length; ci++) {
+            const c = coloursMeta[ci]
+            const images = []
+            if (Array.isArray(c.imageUrls)) images.push(...c.imageUrls)                     // keep existing
+            for (let ii = 0; ii < 10; ii++) { const f = filesByName[`c${ci}_img${ii}`]; if (f) images.push(await upload(f, 'image')) } // append new
+            const videos = []
+            if (Array.isArray(c.videoUrls)) videos.push(...c.videoUrls)
+            for (let vi = 0; vi < 3; vi++) { const f = filesByName[`c${ci}_vid${vi}`]; if (f) videos.push(await upload(f, 'video')) }
+            const sizes = Array.isArray(c.sizes) ? c.sizes : []
+            sizes.forEach((s) => allSizes.add(s))
+            colours.push({ color: c.color, colorCode: c.colorCode, images, videos, sizes, mrp: Number(c.mrp) || 0, sellingPrice: c.sellingPrice ? Number(c.sellingPrice) : undefined, discount: Number(c.discount) || 0, description: c.description })
+            sizes.forEach((s) => { const ev = findV(s, c.color); variants.push(ev || { size: s, color: c.color, colorCode: c.colorCode, stock: 0 }) })
+        }
+
+        product.colours = colours
+        product.variants = variants
+        product.sizes = [...allSizes]
+        product.price = Number(coloursMeta[0].mrp) || product.price
+        product.discountPrice = coloursMeta[0].sellingPrice ? Number(coloursMeta[0].sellingPrice) : product.discountPrice
+        if (colours[0]?.images?.length) product.image = colours[0].images
+        const sc = filesByName['sizeChart']; if (sc) product.sizeChart = await upload(sc, 'image')
+
+        await product.save()
+        res.json({ success: true, message: 'Product updated', productId: product._id, productCode: product.productCode })
+    } catch (error) {
+        console.log(error)
+        res.json({ success: false, message: error.message })
+    }
+}
+
+export { listProducts, addProduct, removeProduct, singleProduct, getRelatedProducts, getRecentlyViewed, updateProduct, updateStock, setProductStatus, duplicateProduct, productDashboard, productsAddedReport, importExcel, addProductColourwise, updateProductColourwise }
