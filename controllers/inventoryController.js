@@ -204,15 +204,14 @@ const drawApparelTag = (doc, product, v = {}, png, x0, y0) => {
     line('PRODUCT :', (product.productType || product.category || '').toUpperCase())
     line('NET QUANTITY :', product.netQuantity || '1 N')
 
-    // SIZE block (with garment measurements if present)
-    doc.font('Helvetica-Bold').fontSize(7).fillColor('#111').text('SIZE :', LX, y, { width: innerW, continued: sizeLines.length > 0 })
+    // Garment MEASUREMENTS block — only when present (the plain size is shown
+    // once, on one line, in the attribute grid below).
     if (sizeLines.length) {
+        doc.font('Helvetica-Bold').fontSize(7).fillColor('#111').text('MEASUREMENTS :', LX, y, { width: innerW, continued: true })
         doc.font('Helvetica').text(` ${sizeLines[0]}`)
         for (let i = 1; i < sizeLines.length; i++) doc.font('Helvetica').fontSize(7).fillColor('#111').text(sizeLines[i], LX + 34, doc.y + 1, { width: innerW - 34 })
-    } else {
-        doc.font('Helvetica').text(` ${v.size || '—'}`)
+        y = doc.y + 6
     }
-    y = doc.y + 6
 
     // MRP (Helvetica has no ₹ glyph → "Rs." keeps every PDF reader/printer correct)
     doc.font('Helvetica-Bold').fontSize(9).fillColor('#111').text(`MRP Rs. ${Number(product.price || 0).toFixed(2)}`, LX, y, { width: innerW })
@@ -245,16 +244,16 @@ const drawApparelTag = (doc, product, v = {}, png, x0, y0) => {
         doc.font('Helvetica').text(` ${val || '—'}`)
         y = doc.y + 1.5
     }
-    attr('ARTICLE NO', product.productCode)
+    // ARTICLE NO must be UNIQUE per item → use the variant SKU (the product code
+    // is shared across all sizes/colours, so it's shown as MOD/style instead).
+    attr('ARTICLE NO', v.sku || product.productCode)
+    attr('STYLE', product.productCode)
     attr('MOD', (product.productType || product.name || '').toString().toUpperCase().slice(0, 18))
     attr('COL', (v.color || '').toUpperCase())
     attr('CAT', (product.category || '').toUpperCase())
     attr('MAT', (product.fabric || product.material || '').toUpperCase())
-    // SIZE in place of GEN, emphasised on the right like a garment tag.
-    const sizeY = y
-    doc.font('Helvetica-Bold').fontSize(6.5).fillColor('#111').text('SIZE :', LX, sizeY, { width: innerW / 2, continued: true })
-    doc.font('Helvetica').text(` ${String(v.size || '—').toUpperCase()}`)
-    doc.font('Helvetica-Bold').fontSize(11).fillColor('#111').text(String(v.size || '').toUpperCase(), LX, sizeY - 3, { width: innerW, align: 'right' })
+    // SIZE — once, on one line (in place of GEN).
+    attr('SIZE', String(v.size || '—').toUpperCase())
 
     return { W, H }
 }

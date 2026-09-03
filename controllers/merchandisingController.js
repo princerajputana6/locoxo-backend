@@ -59,7 +59,7 @@ const publicSections = async (req, res) => {
         const now = new Date();
         const all = await merchandisingModel.find({ status: { $in: ['active', 'scheduled'] } })
             .populate('products', 'name image price discountPrice rating status')
-            .populate('combos.products', 'name image price discountPrice status')
+            .populate('combos.products', 'name image price discountPrice status sizes variants')
             .sort({ rank: 1 }).lean();
         const live = all.filter((s) => {
             if (s.status === 'active') return true;
