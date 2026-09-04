@@ -312,7 +312,7 @@ export const inventoryBarcodeSheetPdf = async (req, res) => {
             const qty = Math.max(0, Math.floor(Number(it.stock) || 0))
             const png = await pngFor(it)
             for (let i = 0; i < qty && units.length < MAX_TAGS; i++) {
-                units.push({ it, png, unitLabel: `${i + 1} / ${qty}` })
+                units.push({ it, png, unitLabel: `${i + 1}` })
             }
         }
         // No stock recorded anywhere → still give one tag per row so the download isn't empty.
@@ -390,7 +390,7 @@ export const barcodeSheetPdf = async (req, res) => {
             const qty = Math.max(0, Math.floor(Number(t.v.stock) || 0))
             const png = await pngFor(t.v.barcode || t.v.sku)
             for (let i = 0; i < qty && units.length < MAX_TAGS; i++) {
-                units.push({ p: t.p, v: { ...t.v, unitLabel: `${i + 1} / ${qty}` }, png })
+                units.push({ p: t.p, v: { ...t.v, unitLabel: `${i + 1}` }, png })
             }
         }
         if (!units.length) {
