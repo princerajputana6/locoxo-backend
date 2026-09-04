@@ -263,6 +263,12 @@ const drawApparelTag = (doc, product, v = {}, png, x0, y0) => {
 // Build the EAN-13 (or Code-128) barcode PNG for a variant/code.
 const barcodePng = (codeText) => bwipjs.toBuffer({ bcid: pickBcid(codeText), text: String(codeText), scale: 3, height: 14, includetext: true, textxalign: 'center', textsize: 8 })
 
+// Per-unit code: BRAND-COLOR-CATEGORY-SUBCATEGORY-#### (unit number zero-padded to 4).
+const unitCode = ({ brand, color, category, subCategory }, n) => {
+    const seg = (s) => String(s || '').toUpperCase().replace(/[^A-Z0-9]+/g, '').slice(0, 8) || 'NA'
+    return [seg(brand || 'LOCOXO'), seg(color), seg(category), seg(subCategory), String(n).padStart(4, '0')].join('-')
+}
+
 // ── Barcode / price-tag PDFs for INVENTORY items (stock is separate from products) ──
 // Shape an inventory item into the product/variant objects drawApparelTag expects.
 const invToProduct = (it) => ({
@@ -312,7 +318,7 @@ export const inventoryBarcodeSheetPdf = async (req, res) => {
             const qty = Math.max(0, Math.floor(Number(it.stock) || 0))
             const png = await pngFor(it)
             for (let i = 0; i < qty && units.length < MAX_TAGS; i++) {
-                units.push({ it, png, unitLabel: `${i + 1}` })
+                units.push({ it, png, unitLabel: unitCode({ brand: it.brand, color: it.color, category: it.category, subCategory: it.subCategory }, i + 1) })
             }
         }
         // No stock recorded anywhere → still give one tag per row so the download isn't empty.
@@ -390,7 +396,7 @@ export const barcodeSheetPdf = async (req, res) => {
             const qty = Math.max(0, Math.floor(Number(t.v.stock) || 0))
             const png = await pngFor(t.v.barcode || t.v.sku)
             for (let i = 0; i < qty && units.length < MAX_TAGS; i++) {
-                units.push({ p: t.p, v: { ...t.v, unitLabel: `${i + 1}` }, png })
+                units.push({ p: t.p, v: { ...t.v, unitLabel: unitCode({ brand: t.p.brand, color: t.v.color, category: t.p.category, subCategory: t.p.subCategory }, i + 1) }, png })
             }
         }
         if (!units.length) {
