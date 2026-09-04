@@ -254,6 +254,8 @@ const drawApparelTag = (doc, product, v = {}, png, x0, y0) => {
     attr('MAT', (product.fabric || product.material || '').toUpperCase())
     // SIZE — once, on one line (in place of GEN).
     attr('SIZE', String(v.size || '—').toUpperCase())
+    // UNIT — which physical piece this tag is (e.g. "3 / 10"), when printing per unit.
+    if (v.unitLabel) attr('UNIT', v.unitLabel)
 
     return { W, H }
 }
@@ -293,7 +295,31 @@ export const inventoryBarcodeSheetPdf = async (req, res) => {
         else if (code) q.productCode = code
         const items = await inventoryItemModel.find(q).lean()
         if (!items.length) return res.json({ success: false, message: 'No inventory to print' })
-        const withPng = await Promise.all(items.map(async (it) => ({ it, png: await barcodePng(it.barcode || it.sku || it.productCode) })))
+
+        // One tag per PHYSICAL UNIT: repeat each row (code + size + colour) by its stock.
+        // The scannable barcode stays the SKU's (all units of a variant share it); the
+        // printed UNIT number ("3 / 10") distinguishes the individual pieces.
+        const MAX_TAGS = 3000 // safety cap so a bad stock value can't generate a giant PDF
+        const pngByBarcode = new Map()
+        const pngFor = async (it) => {
+            const key = it.barcode || it.sku || it.productCode
+            if (!pngByBarcode.has(key)) pngByBarcode.set(key, await barcodePng(key))
+            return pngByBarcode.get(key)
+        }
+        const units = []
+        for (const it of items) {
+            if (units.length >= MAX_TAGS) break
+            const qty = Math.max(0, Math.floor(Number(it.stock) || 0))
+            const png = await pngFor(it)
+            for (let i = 0; i < qty && units.length < MAX_TAGS; i++) {
+                units.push({ it, png, unitLabel: `${i + 1} / ${qty}` })
+            }
+        }
+        // No stock recorded anywhere → still give one tag per row so the download isn't empty.
+        if (!units.length) {
+            for (const it of items) units.push({ it, png: await pngFor(it), unitLabel: '' })
+        }
+
         res.setHeader('Content-Type', 'application/pdf')
         res.setHeader('Content-Disposition', `attachment; filename="barcodes-${Date.now()}.pdf"`)
         const doc = new PDFDocument({ size: 'A4', margin: 30 }); doc.pipe(res)
@@ -302,9 +328,9 @@ export const inventoryBarcodeSheetPdf = async (req, res) => {
         const usableW = doc.page.width - doc.page.margins.left - doc.page.margins.right
         const cols = Math.max(1, Math.floor((usableW + gutter) / (W + gutter)))
         let x = startX, y = startY, col = 0
-        withPng.forEach(({ it, png }) => {
+        units.forEach(({ it, png, unitLabel }) => {
             if (y + H > doc.page.height - doc.page.margins.bottom) { doc.addPage(); x = startX; y = startY; col = 0 }
-            drawApparelTag(doc, invToProduct(it), invVariant(it), png, x, y)
+            drawApparelTag(doc, invToProduct(it), { ...invVariant(it), unitLabel }, png, x, y)
             col++; if (col >= cols) { col = 0; x = startX; y += H + gutter } else { x += W + gutter }
         })
         doc.end()
@@ -351,7 +377,25 @@ export const barcodeSheetPdf = async (req, res) => {
 
         if (tags.length === 0) return res.json({ success: false, message: 'No barcodes match the selected filters' })
 
-        const withImages = await Promise.all(tags.map(async (t) => ({ ...t, png: await barcodePng(t.v.barcode || t.v.sku) })))
+        // One tag per PHYSICAL UNIT: repeat each variant by its stock, labelled "n / total".
+        const MAX_TAGS = 3000
+        const pngCache = new Map()
+        const pngFor = async (code) => {
+            if (!pngCache.has(code)) pngCache.set(code, await barcodePng(code))
+            return pngCache.get(code)
+        }
+        const units = []
+        for (const t of tags) {
+            if (units.length >= MAX_TAGS) break
+            const qty = Math.max(0, Math.floor(Number(t.v.stock) || 0))
+            const png = await pngFor(t.v.barcode || t.v.sku)
+            for (let i = 0; i < qty && units.length < MAX_TAGS; i++) {
+                units.push({ p: t.p, v: { ...t.v, unitLabel: `${i + 1} / ${qty}` }, png })
+            }
+        }
+        if (!units.length) {
+            for (const t of tags) units.push({ p: t.p, v: t.v, png: await pngFor(t.v.barcode || t.v.sku) })
+        }
 
         res.setHeader('Content-Type', 'application/pdf')
         res.setHeader('Content-Disposition', `attachment; filename="locoxo-price-tags-${Date.now()}.pdf"`)
@@ -367,7 +411,7 @@ export const barcodeSheetPdf = async (req, res) => {
         const cols = Math.max(1, Math.floor((usableW + gutter) / (W + gutter)))
         let x = startX, y = startY, col = 0
 
-        withImages.forEach((t) => {
+        units.forEach((t) => {
             if (y + H > doc.page.height - doc.page.margins.bottom) { doc.addPage(); x = startX; y = startY; col = 0 }
             drawApparelTag(doc, t.p, t.v, t.png, x, y)
             col++
