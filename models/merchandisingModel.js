@@ -19,8 +19,12 @@ const merchandisingSchema = new mongoose.Schema({
     // Category cards (contentType 'categories').
     categories: [{
         name: { type: String },
-        image: { type: String },
+        image: { type: String },                         // desktop image
+        imageMobile: { type: String },                   // optional mobile-specific image
         url: { type: String },                           // where the card points (any URL/route)
+        showName: { type: Boolean, default: true },      // show the category name overlay
+        showButton: { type: Boolean, default: true },    // show the "Shop Now" button
+        buttonText: { type: String, default: 'Shop Now' },
     }],
 
     // Combo bundles (contentType 'combo').
