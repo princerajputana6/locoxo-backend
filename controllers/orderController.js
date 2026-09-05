@@ -9,6 +9,24 @@ import generateInvoice from '../utils/invoiceGenerator.js';
 import fs from 'fs';
 import { createOrder as createCashfreeOrder, getOrderStatus as getCashfreeStatus } from '../services/cashfreeService.js';
 import { generateOrderNumber, customerIdFor } from '../utils/orderNumber.js';
+import couponModel from '../models/couponModel.js';
+
+// Re-validate a coupon server-side and return the discount (never trust a client amount).
+const couponDiscountFor = async (code, subtotal) => {
+    if (!code) return 0;
+    try {
+        const c = await couponModel.findOne({ code: String(code).toUpperCase() });
+        if (!c || c.status !== 'active') return 0;
+        const now = new Date();
+        if (c.validFrom && now < c.validFrom) return 0;
+        if (c.validUntil && now > c.validUntil) return 0;
+        if (c.minPurchaseAmount && subtotal < c.minPurchaseAmount) return 0;
+        if (c.usageLimit && c.usedCount >= c.usageLimit) return 0;
+        let d = c.discountType === 'percentage' ? (subtotal * c.discountValue) / 100 : c.discountValue;
+        if (c.maxDiscountAmount) d = Math.min(d, c.maxDiscountAmount);
+        return Math.round(Math.max(0, Math.min(d, subtotal)));
+    } catch { return 0; }
+};
 
 // Decrement variant stock for every line of an order and log a 'sale' adjustment.
 // Runs once per order (guarded by order.inventoryReduced by the caller).
@@ -104,22 +122,29 @@ const placeOrder = async (req,res) => {
         
         console.log('Full Request Body:', JSON.stringify(req.body, null, 2));
         
-        const { userId, items, amount, address, orderNumber, subtotal, shippingCharge, referralCode } = req.body;
-        
+        const { userId, items, amount, address, orderNumber, subtotal, shippingCharge, referralCode, couponCode } = req.body;
+
         console.log('Extracted Values:', { userId, orderNumber, subtotal, itemsCount: items?.length, amount });
 
         if (!orderNumber || !subtotal) {
             return res.json({success:false, message: `Missing required fields: ${!orderNumber ? 'orderNumber ' : ''}${!subtotal ? 'subtotal' : ''}`})
         }
 
+        // Authoritative amount: recomputed server-side from subtotal, coupon and shipping.
+        const shipping = shippingCharge ?? deliveryCharge;
+        const couponDiscount = await couponDiscountFor(couponCode, subtotal);
+        const finalAmount = Math.max(0, subtotal - couponDiscount) + (shipping || 0);
+
         const orderData = {
             userId,
             orderNumber,
             items,
             subtotal,
-            shippingCharge: shippingCharge || deliveryCharge,
+            shippingCharge: shipping || 0,
+            couponCode: couponCode || undefined,
+            couponDiscount,
             address,
-            amount,
+            amount: finalAmount,
             paymentMethod:"COD",
             payment:false,
             date: Date.now()
@@ -134,8 +159,8 @@ const placeOrder = async (req,res) => {
                 
                 // Update influencer stats
                 influencer.conversions += 1;
-                influencer.totalSales += amount;
-                influencer.totalEarnings += (amount * influencer.commissionRate) / 100;
+                influencer.totalSales += finalAmount;
+                influencer.totalEarnings += (finalAmount * influencer.commissionRate) / 100;
                 await influencer.save();
             }
         }
@@ -349,16 +374,23 @@ const verifyRazorpay = async (req,res) => {
 // Placing orders using Cashfree Method
 const placeOrderCashfree = async (req,res) => {
     try {
-        const { userId, items, amount, address, orderNumber, subtotal, shippingCharge, referralCode, email } = req.body
+        const { userId, items, amount, address, orderNumber, subtotal, shippingCharge, referralCode, email, couponCode } = req.body
+
+        // Authoritative amount: recomputed server-side (coupon re-validated, never trusted from the client).
+        const shipping = shippingCharge ?? deliveryCharge;
+        const couponDiscount = await couponDiscountFor(couponCode, subtotal);
+        const finalAmount = Math.max(0, subtotal - couponDiscount) + (shipping || 0);
 
         const orderData = {
             userId,
             orderNumber,
             items,
             subtotal,
-            shippingCharge: shippingCharge || deliveryCharge,
+            shippingCharge: shipping || 0,
+            couponCode: couponCode || undefined,
+            couponDiscount,
             address,
-            amount,
+            amount: finalAmount,
             paymentMethod:"Cashfree",
             payment:false,
             date: Date.now()
@@ -371,8 +403,8 @@ const placeOrderCashfree = async (req,res) => {
                 orderData.influencerId = influencer._id;
                 orderData.referralCode = referralCode;
                 influencer.conversions += 1;
-                influencer.totalSales += amount;
-                influencer.totalEarnings += (amount * influencer.commissionRate) / 100;
+                influencer.totalSales += finalAmount;
+                influencer.totalEarnings += (finalAmount * influencer.commissionRate) / 100;
                 await influencer.save();
             }
         }
@@ -380,11 +412,15 @@ const placeOrderCashfree = async (req,res) => {
         const newOrder = new orderModel(orderData)
         await newOrder.save()
 
-        const frontendUrl = process.env.FRONTEND_URL || req.headers.origin || 'http://localhost:5173'
+        let frontendUrl = process.env.FRONTEND_URL || req.headers.origin || 'http://localhost:5173'
+        // Cashfree PROD requires an https return_url — coerce it so a stray http origin never breaks checkout.
+        if ((process.env.CASHFREE_ENV || '').toUpperCase() === 'PROD' && frontendUrl.startsWith('http://')) {
+            frontendUrl = frontendUrl.replace('http://', 'https://')
+        }
 
         const cfOrder = await createCashfreeOrder({
             orderId: newOrder._id.toString(),
-            amount,
+            amount: finalAmount,
             customer: {
                 id: userId.toString(),
                 name: address?.name,
