@@ -26,6 +26,7 @@ const fieldsFromBody = (body) => {
     if (body.description !== undefined) out.description = body.description;
     if (body.parentCategory !== undefined) out.parentCategory = body.parentCategory || null;
     if (body.status !== undefined && body.status !== '') out.status = body.status;
+    if (body.displayInMenu !== undefined) out.displayInMenu = body.displayInMenu === true || body.displayInMenu === 'true';
     if (body.displayOrder !== undefined) out.displayOrder = Number(body.displayOrder) || 0;
     if (body.metaTitle !== undefined) out.metaTitle = body.metaTitle;
     if (body.metaDescription !== undefined) out.metaDescription = body.metaDescription;
