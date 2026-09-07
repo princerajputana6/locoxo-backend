@@ -9,6 +9,8 @@ const staffSchema = new mongoose.Schema({
     password: { type: String },
     role: { type: String, enum: ['admin', 'staff'], default: 'staff' },
     accessType: { type: String, enum: ['all', 'limited'], default: 'limited' },
+    // Modules a "limited" staff may access (keys match the admin sidebar sections).
+    permissions: [{ type: String }],
     status: { type: String, enum: ['active', 'inactive'], default: 'active' },
     lastLogin: { type: Date },
 }, { timestamps: true });
