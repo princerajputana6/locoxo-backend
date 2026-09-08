@@ -6,7 +6,7 @@ import productModel from '../models/productModel.js'
 import orderModel from '../models/orderModel.js'
 import stockAdjustmentModel from '../models/stockAdjustmentModel.js'
 import { peekSeq, nextSeq } from '../models/counterModel.js'
-import { productCode as buildProductCode } from '../utils/barcode.js'
+import { productCode as buildProductCode, humanBarcode } from '../utils/barcode.js'
 import productCodeModel from '../models/productCodeModel.js'
 import inventoryItemModel from '../models/inventoryItemModel.js'
 import company from '../config/company.js'
@@ -299,21 +299,22 @@ export const inventoryBarcodeSheetPdf = async (req, res) => {
         // the human-readable number both carry this per-unit value, so every piece
         // is individually identifiable.
         const MAX_TAGS = 3000 // safety cap so a bad stock value can't generate a giant PDF
+        // Per-unit barcode value = productCode-NAME3-CAT3-SIZE-COL3-<unit no.>
+        const unitVal = (it, n) => humanBarcode({ productCode: it.productCode, category: it.category, name: it.name || it.productCode, size: it.size, color: it.color, number: n })
         const units = []
         for (const it of items) {
             if (units.length >= MAX_TAGS) break
-            const base = it.barcode || it.sku || it.productCode
             const qty = Math.max(0, Math.floor(Number(it.stock) || 0))
             for (let i = 0; i < qty && units.length < MAX_TAGS; i++) {
-                const unitVal = `${base}-${String(i + 1).padStart(4, '0')}`
-                units.push({ it, png: await barcodePng(unitVal), unitVal })
+                const val = unitVal(it, i + 1)
+                units.push({ it, png: await barcodePng(val), unitVal: val })
             }
         }
         // No stock recorded anywhere → still give one tag per row so the download isn't empty.
         if (!units.length) {
             for (const it of items) {
-                const base = it.barcode || it.sku || it.productCode
-                units.push({ it, png: await barcodePng(base), unitVal: base })
+                const val = unitVal(it, 1)
+                units.push({ it, png: await barcodePng(val), unitVal: val })
             }
         }
 
@@ -377,18 +378,19 @@ export const barcodeSheetPdf = async (req, res) => {
         // One tag per PHYSICAL UNIT, each with its own unique barcode: base + "-<unit no.>".
         // The scannable barcode and the human-readable number both carry this per-unit value.
         const MAX_TAGS = 3000
+        // Per-unit barcode value = productCode-NAME3-CAT3-SIZE-COL3-<unit no.>
+        const unitVal = (p, v, n) => humanBarcode({ productCode: p.productCode, category: p.category, name: p.name, size: v.size, color: v.color, number: n })
         const units = []
         for (const t of tags) {
             if (units.length >= MAX_TAGS) break
-            const base = t.v.barcode || t.v.sku
             const qty = Math.max(0, Math.floor(Number(t.v.stock) || 0))
             for (let i = 0; i < qty && units.length < MAX_TAGS; i++) {
-                const unitVal = `${base}-${String(i + 1).padStart(4, '0')}`
-                units.push({ p: t.p, v: { ...t.v, barcode: unitVal, humanBarcode: unitVal }, png: await barcodePng(unitVal) })
+                const val = unitVal(t.p, t.v, i + 1)
+                units.push({ p: t.p, v: { ...t.v, barcode: val, humanBarcode: val }, png: await barcodePng(val) })
             }
         }
         if (!units.length) {
-            for (const t of tags) { const base = t.v.barcode || t.v.sku; units.push({ p: t.p, v: t.v, png: await barcodePng(base) }) }
+            for (const t of tags) { const val = unitVal(t.p, t.v, 1); units.push({ p: t.p, v: { ...t.v, barcode: val, humanBarcode: val }, png: await barcodePng(val) }) }
         }
 
         res.setHeader('Content-Type', 'application/pdf')

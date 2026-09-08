@@ -129,7 +129,8 @@ productSchema.pre('save', async function (next) {
                 // Human-readable label string per the requirement doc's format.
                 if (!v.humanBarcode) {
                     v.humanBarcode = humanBarcode({
-                        category: this.audience || this.category,
+                        productCode: this.productCode,
+                        category: this.category || this.audience,
                         name: this.name,
                         size: v.size,
                         color: v.color,

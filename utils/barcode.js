@@ -1,24 +1,26 @@
 // Barcode / product-code helpers for inventory.
 //
-// Two representations per spec:
-//  1. Human-readable label string  → category(1st word) + name(first 2 words)
-//     + size + colour(first 3 letters) + stock number.  e.g. MALE-COTTONTEE-M-BLA-10
+// Two representations:
+//  1. Human-readable label string  → productCode + name(first 3 letters) +
+//     category(first 3 letters) + size + colour(first 3 letters) + number.
+//     e.g. LX202601-NEW-TSH-M-DAR-16
 //  2. Indian scannable EAN-13      → GS1 India prefix 890 + 9-digit serial + check digit.
 
 const clean = (s) => String(s || '').toUpperCase().replace(/[^A-Z0-9]+/g, '')
 
-// First `n` whitespace-separated words of a string, concatenated & cleaned.
-const firstWords = (s, n) =>
-    clean(String(s || '').trim().split(/\s+/).slice(0, n).join(''))
-
-// Human-readable barcode string. Follows the requirement doc's format exactly.
-export const humanBarcode = ({ category, name, size, color, stock }) => {
-    const cat = clean(String(category || '').trim().split(/\s+/)[0] || '').slice(0, 6) || 'GEN'
-    const nm = firstWords(name, 2).slice(0, 8) || 'PRD'
+// Human-readable barcode string:
+//   <productCode>-<name 3 letters>-<category 3 letters>-<size>-<colour 3 letters>-<number>
+// `number` is the stock count for a stored/summary code, or the running unit
+// number (1,2,3…) on an individual per-unit tag.
+export const humanBarcode = ({ productCode, category, name, size, color, stock, number }) => {
+    const code = clean(productCode)
+    const nm = clean(name).slice(0, 3) || 'PRD'
+    const cat = clean(category).slice(0, 3) || 'GEN'
     const sz = clean(size).slice(0, 4) || 'FR'
     const col = clean(color).slice(0, 3) || 'CLR'
-    const st = Number.isFinite(Number(stock)) ? Number(stock) : 0
-    return `${cat}-${nm}-${sz}-${col}-${st}`
+    const n = number !== undefined ? number : stock
+    const num = Number.isFinite(Number(n)) ? Number(n) : 0
+    return [code, nm, cat, sz, col, num].filter((x) => x !== '' && x !== undefined && x !== null).join('-')
 }
 
 // EAN-13 check digit for a 12-digit numeric string.

@@ -32,7 +32,7 @@ inventoryItemSchema.pre('save', async function (next) {
     try {
         if (!this.sku) this.sku = `${slug(this.productCode)}-${slug(this.size)}-${slug(this.color)}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`
         if (!this.barcode) this.barcode = ean13FromSerial(await nextSeq('ean'))
-        if (!this.humanBarcode) this.humanBarcode = humanBarcode({ category: this.category, name: this.name || this.productCode, size: this.size, color: this.color })
+        if (!this.humanBarcode) this.humanBarcode = humanBarcode({ productCode: this.productCode, category: this.category, name: this.name || this.productCode, size: this.size, color: this.color, stock: this.stock })
         next()
     } catch (e) { next(e) }
 })
