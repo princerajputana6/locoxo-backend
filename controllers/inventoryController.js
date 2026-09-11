@@ -258,6 +258,21 @@ const drawApparelTag = (doc, product, v = {}, png, x0, y0) => {
     return { W, H }
 }
 
+// Render ONE apparel tag per page — centred horizontally near the top and
+// enlarged ~2x so every line prints clearly (no 6-up cramming/overlap).
+const drawTagPaged = (doc, product, v, png, first) => {
+    const { W } = APPAREL_TAG
+    if (!first) doc.addPage()
+    const scale = 2
+    const topM = 40
+    const dx = Math.max(0, (doc.page.width - W * scale) / 2)
+    doc.save()
+    doc.translate(dx, topM)
+    doc.scale(scale)
+    drawApparelTag(doc, product, v, png, 0, 0)
+    doc.restore()
+}
+
 // Build the EAN-13 (or Code-128) barcode PNG for a variant/code.
 const barcodePng = (codeText) => bwipjs.toBuffer({ bcid: pickBcid(codeText), text: String(codeText), scale: 3, height: 14, includetext: true, textxalign: 'center', textsize: 8 })
 
@@ -321,15 +336,8 @@ export const inventoryBarcodeSheetPdf = async (req, res) => {
         res.setHeader('Content-Type', 'application/pdf')
         res.setHeader('Content-Disposition', `attachment; filename="barcodes-${Date.now()}.pdf"`)
         const doc = new PDFDocument({ size: 'A4', margin: 30 }); doc.pipe(res)
-        const { W, H } = APPAREL_TAG, gutter = 14
-        const startX = doc.page.margins.left, startY = doc.page.margins.top
-        const usableW = doc.page.width - doc.page.margins.left - doc.page.margins.right
-        const cols = Math.max(1, Math.floor((usableW + gutter) / (W + gutter)))
-        let x = startX, y = startY, col = 0
-        units.forEach(({ it, png, unitVal }) => {
-            if (y + H > doc.page.height - doc.page.margins.bottom) { doc.addPage(); x = startX; y = startY; col = 0 }
-            drawApparelTag(doc, invToProduct(it), { ...invVariant(it), barcode: unitVal, humanBarcode: unitVal }, png, x, y)
-            col++; if (col >= cols) { col = 0; x = startX; y += H + gutter } else { x += W + gutter }
+        units.forEach(({ it, png, unitVal }, i) => {
+            drawTagPaged(doc, invToProduct(it), { ...invVariant(it), barcode: unitVal, humanBarcode: unitVal }, png, i === 0)
         })
         doc.end()
     } catch (e) { console.log(e); if (!res.headersSent) res.status(500).json({ success: false, message: e.message }) }
@@ -398,23 +406,7 @@ export const barcodeSheetPdf = async (req, res) => {
 
         const doc = new PDFDocument({ size: 'A4', margin: 30 })
         doc.pipe(res)
-
-        const { W, H } = APPAREL_TAG
-        const gutter = 14
-        const startX = doc.page.margins.left
-        const startY = doc.page.margins.top
-        const usableW = doc.page.width - doc.page.margins.left - doc.page.margins.right
-        const cols = Math.max(1, Math.floor((usableW + gutter) / (W + gutter)))
-        let x = startX, y = startY, col = 0
-
-        units.forEach((t) => {
-            if (y + H > doc.page.height - doc.page.margins.bottom) { doc.addPage(); x = startX; y = startY; col = 0 }
-            drawApparelTag(doc, t.p, t.v, t.png, x, y)
-            col++
-            if (col >= cols) { col = 0; x = startX; y += H + gutter }
-            else { x += W + gutter }
-        })
-
+        units.forEach((t, i) => drawTagPaged(doc, t.p, t.v, t.png, i === 0))
         doc.end()
     } catch (error) {
         console.log(error)
