@@ -7,7 +7,10 @@ name: Keep backend warm
 
 on:
   schedule:
-    - cron: '*/13 * * * *'
+    # Every 10 min. GitHub cron is often delayed a few minutes, so keep this
+    # comfortably under Render's 15-min sleep window. For a hard guarantee use
+    # an external uptime pinger (UptimeRobot, cron-job.org) or a paid Render plan.
+    - cron: '*/10 * * * *'
   workflow_dispatch:
 
 jobs:
