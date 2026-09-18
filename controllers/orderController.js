@@ -12,6 +12,10 @@ import { generateOrderNumber, customerIdFor } from '../utils/orderNumber.js';
 import couponModel from '../models/couponModel.js';
 import shipmentModel from '../models/shipmentModel.js';
 import { getAdapter } from '../services/shipping/index.js';
+import { shipOrder } from './shipmentController.js';
+
+// Statuses that mean "dispatch it" → auto-allocate a courier via the provider.
+const SHIP_TRIGGER_STATUSES = ['Shipped', 'Pickuped'];
 
 // Re-validate a coupon server-side and return the discount (never trust a client amount).
 const couponDiscountFor = async (code, subtotal) => {
@@ -535,6 +539,30 @@ const updateStatus = async (req,res) => {
         if (!order) return res.json({ success: false, message: 'Order not found' })
 
         const admin = req.adminEmail || 'admin'
+
+        // Marking an order Shipped/Pickuped → auto-allocate a courier at the shipping
+        // provider (Velocity). The created shipment drives the order to "Pickuped",
+        // stores the AWB/courier/label, and starts live tracking. We return early so
+        // the generic status write below doesn't clobber the shipment's changes.
+        if (SHIP_TRIGGER_STATUSES.includes(status)) {
+            try {
+                const { shipment, result, alreadyShipped } = await shipOrder(order, {
+                    weight: order.delivery?.weight,
+                    dimensions: order.delivery?.dimensions,
+                })
+                const awb = shipment?.awb
+                const courier = result?.courierName || shipment?.courierName || 'courier'
+                return res.json({
+                    success: true,
+                    message: alreadyShipped ? `Order already shipped (AWB ${awb})` : `Shipped via ${courier} — AWB ${awb}`,
+                    orderNumber: order.orderNumber,
+                    awb,
+                })
+            } catch (e) {
+                console.log('auto-ship on status update:', e.message)
+                return res.json({ success: false, message: `Could not ship: ${e.message}` })
+            }
+        }
 
         // Confirmed → assign the LX order number (if still on a legacy/temp one) and
         // generate the invoice.

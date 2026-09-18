@@ -86,53 +86,65 @@ const syncOrderFromShipment = async (shipment) => {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Admin: SHIP an order — allocate a courier via the provider, store AWB + label,
-// and advance the order to "Pickuped". This is the one-click "ship" action.
+// Core "ship" action — allocate a courier via the provider, store AWB + label,
+// and advance the order to "Pickuped". Shared by the HTTP handler AND the order
+// status-update path (marking an order "Shipped"/"Pickuped" auto-ships it).
+//
+// Throws on provider failure (so callers can surface e.g. "wallet empty").
+// Returns { shipment, result, alreadyShipped }.
 // ─────────────────────────────────────────────────────────────────────────────
+export const shipOrder = async (order, { provider, carrierId, weight, dimensions } = {}) => {
+    let shipment = await shipmentModel.findOne({ orderId: order._id, isReturn: { $ne: true } })
+    if (shipment && shipment.awb && shipment.status !== 'cancelled') {
+        return { shipment, alreadyShipped: true }
+    }
+
+    const adapter = getAdapter(provider)
+    const result = await adapter.createShipment(order, { carrierId, weight, dimensions })
+
+    const doc = {
+        orderId: order._id,
+        userId: order.userId,
+        provider: adapter.name,
+        awb: result.awb,
+        trackingUrl: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/track-order/${order._id}`,
+        carrierTrackUrl: result.trackingUrl || null,
+        status: 'created',
+        currentLocation: null,
+        expectedDelivery: result.expectedDelivery || null,
+        courierName: result.courierName,
+        courierCompanyId: result.courierCompanyId,
+        labelUrl: result.labelUrl,
+        manifestUrl: result.manifestUrl,
+        providerShipmentId: result.providerShipmentId,
+        providerOrderId: result.providerOrderId,
+        appliedWeight: result.appliedWeight,
+        cod: result.cod,
+        charges: result.charges,
+        events: [{ status: 'created', description: `Courier allocated: ${result.courierName || adapter.name}`, timestamp: new Date() }],
+        providerPayload: result.raw,
+    }
+
+    shipment = shipment
+        ? await shipmentModel.findByIdAndUpdate(shipment._id, doc, { new: true })
+        : await shipmentModel.create(doc)
+
+    const orderStatus = await syncOrderFromShipment(shipment)
+    broadcast(shipment, orderStatus)
+    return { shipment, result, alreadyShipped: false }
+}
+
+// Admin HTTP endpoint: ship one order (from the "Ship Order" button).
 export const createShipment = async (req, res) => {
     try {
         const { orderId, provider, carrierId, weight, dimensions } = req.body
         const order = await orderModel.findById(orderId)
         if (!order) return res.json({ success: false, message: 'Order not found' })
 
-        let shipment = await shipmentModel.findOne({ orderId, isReturn: { $ne: true } })
-        if (shipment && shipment.awb && shipment.status !== 'cancelled') {
-            return res.json({ success: false, message: 'Shipment already exists for this order', shipment })
-        }
+        const { shipment, result, alreadyShipped } = await shipOrder(order, { provider, carrierId, weight, dimensions })
+        if (alreadyShipped) return res.json({ success: false, message: 'Shipment already exists for this order', shipment })
 
-        const adapter = getAdapter(provider)
-        const result = await adapter.createShipment(order, { carrierId, weight, dimensions })
-
-        const doc = {
-            orderId,
-            userId: order.userId,
-            provider: adapter.name,
-            awb: result.awb,
-            trackingUrl: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/track-order/${orderId}`,
-            carrierTrackUrl: result.trackingUrl || null,
-            status: 'created',
-            currentLocation: null,
-            expectedDelivery: result.expectedDelivery || null,
-            courierName: result.courierName,
-            courierCompanyId: result.courierCompanyId,
-            labelUrl: result.labelUrl,
-            manifestUrl: result.manifestUrl,
-            providerShipmentId: result.providerShipmentId,
-            providerOrderId: result.providerOrderId,
-            appliedWeight: result.appliedWeight,
-            cod: result.cod,
-            charges: result.charges,
-            events: [{ status: 'created', description: `Courier allocated: ${result.courierName || adapter.name}`, timestamp: new Date() }],
-            providerPayload: result.raw,
-        }
-
-        shipment = shipment
-            ? await shipmentModel.findByIdAndUpdate(shipment._id, doc, { new: true })
-            : await shipmentModel.create(doc)
-
-        const orderStatus = await syncOrderFromShipment(shipment)
-        broadcast(shipment, orderStatus)
-        res.json({ success: true, message: `Shipped via ${result.courierName || adapter.name}`, shipment })
+        res.json({ success: true, message: `Shipped via ${result.courierName || shipment.provider}`, shipment })
     } catch (error) {
         console.log('createShipment:', error.message)
         res.json({ success: false, message: error.message })

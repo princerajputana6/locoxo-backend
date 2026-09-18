@@ -31,3 +31,10 @@ services:
         sync: false
       - key: ADMIN_URL
         sync: false
+      # Velocity Shipping (delivery partner) — set values in the Render dashboard.
+      - key: VELOCITY_USERNAME
+        sync: false
+      - key: VELOCITY_PASSWORD
+        sync: false
+      - key: VELOCITY_CLIENT_ID
+        sync: false
