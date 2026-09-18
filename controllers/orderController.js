@@ -516,6 +516,24 @@ const allOrders = async (req,res) => {
     }
 }
 
+// Single order (admin) — powers the full-page Order Details view.
+const getOrderById = async (req, res) => {
+    try {
+        const order = await orderModel.findById(req.params.orderId)
+            .populate('userId', 'name email phone createdAt')
+            .lean()
+        if (!order) return res.json({ success: false, message: 'Order not found' })
+        order.customerId = order.customerId || customerIdFor(order.userId)
+        // Attach the shipment (if any) so the detail page can show live delivery info.
+        let shipment = null
+        try { shipment = await shipmentModel.findOne({ orderId: order._id, isReturn: { $ne: true } }).lean() } catch { /* ignore */ }
+        res.json({ success: true, order, shipment })
+    } catch (error) {
+        console.log(error)
+        res.json({ success: false, message: error.message })
+    }
+}
+
 // User Order Data For Forntend
 const userOrders = async (req,res) => {
     try {
@@ -812,4 +830,4 @@ const downloadInvoice = async (req, res) => {
     }
 };
 
-export {verifyRazorpay, verifyStripe ,placeOrder, placeOrderStripe, placeOrderRazorpay, placeOrderCashfree, verifyCashfree, allOrders, userOrders, updateStatus, downloadInvoice, addOrderNote, setDelivery, createManualOrder, ordersReport, exportOrdersExcel, setPendingReason, verifyBarcode}
+export {verifyRazorpay, verifyStripe ,placeOrder, placeOrderStripe, placeOrderRazorpay, placeOrderCashfree, verifyCashfree, allOrders, userOrders, getOrderById, updateStatus, downloadInvoice, addOrderNote, setDelivery, createManualOrder, ordersReport, exportOrdersExcel, setPendingReason, verifyBarcode}
