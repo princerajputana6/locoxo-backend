@@ -75,7 +75,10 @@ const request = async (path, body, { retry = true } = {}) => {
         return request(path, body, { retry: false })
     }
     if (!res.ok) {
-        const msg = data.message || data.error || (data.errors && JSON.stringify(data.errors)) || `HTTP ${res.status}`
+        // Velocity returns errors as { meta: { message, details } } on some
+        // endpoints and { message } / { errors } on others.
+        const msg = data.meta?.details || data.meta?.message || data.message || data.error
+            || (data.errors && JSON.stringify(data.errors)) || `HTTP ${res.status}`
         throw new Error(`Velocity ${path}: ${msg}`)
     }
     return data
