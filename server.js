@@ -3,6 +3,7 @@ import http from 'http'
 import cors from 'cors'
 import 'dotenv/config'
 import { initRealtime } from './realtime.js'
+import { startTrackingSync } from './services/shipping/trackingSync.js'
 import connectDB from './config/mongodb.js'
 import connectCloudinary from './config/cloudinary.js'
 import { MAX_IMAGE_MB } from './middleware/multer.js'
@@ -144,4 +145,5 @@ app.use((err, req, res, next) => {
 
 const httpServer = http.createServer(app)
 initRealtime(httpServer)
+startTrackingSync()   // background poll of active Velocity shipments
 httpServer.listen(port, ()=> console.log('Server started on PORT : '+ port))

@@ -20,6 +20,14 @@ const adminSettingsSchema = new mongoose.Schema({
     twoFactor: { type: Boolean, default: false },
     adminMobile: { type: String, default: '+91 98765 43210' },
     mobileVerified: { type: Boolean, default: true },
+
+    // Velocity Shipping integration — the pickup warehouse created at runtime.
+    velocity: {
+        warehouseId: { type: String },       // WH… id returned by Create Warehouse
+        pickupLocation: { type: String },    // pickup label used on shipments
+        warehouseName: { type: String },
+        createdAt: { type: Date },
+    },
 }, { timestamps: true });
 
 const adminSettingsModel = mongoose.models.adminSettings || mongoose.model('adminSettings', adminSettingsSchema);

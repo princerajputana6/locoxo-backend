@@ -8,12 +8,14 @@ const eventSchema = new mongoose.Schema({
 }, { _id: true })
 
 const shipmentSchema = new mongoose.Schema({
-    orderId: { type: mongoose.Schema.Types.ObjectId, ref: 'order', required: true, unique: true },
-    userId: { type: mongoose.Schema.Types.ObjectId, ref: 'user', required: true },
+    // Not unique: an order can have a forward shipment AND a later return shipment.
+    orderId: { type: mongoose.Schema.Types.ObjectId, ref: 'order', required: true, index: true },
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: 'user' },
 
-    provider: { type: String, default: 'mock' },        // shiprocket | delhivery | dhl | mock
+    provider: { type: String, default: 'mock' },        // velocity | mock
     awb: { type: String, index: true },                  // air waybill / tracking id
-    trackingUrl: { type: String },
+    trackingUrl: { type: String },                       // our own /track page
+    carrierTrackUrl: { type: String },                   // carrier's public track page
 
     status: {
         type: String,
@@ -22,6 +24,21 @@ const shipmentSchema = new mongoose.Schema({
     },
     currentLocation: { type: String },
     expectedDelivery: { type: Date },
+    deliveredAt: { type: Date },
+
+    // Carrier / allocation details returned by the provider.
+    courierName: { type: String },                       // e.g. "Delhivery Standard"
+    courierCompanyId: { type: String },                  // carrier_id
+    labelUrl: { type: String },                          // shipping label PDF (S3 signed)
+    manifestUrl: { type: String },
+    providerShipmentId: { type: String },                // Velocity shipment_id (SHI…)
+    providerOrderId: { type: String },                   // Velocity order_id (ORD…)
+    appliedWeight: { type: Number },
+    cod: { type: Boolean, default: false },
+    charges: { type: Object },                           // { frwd_charges, rto_charges, … }
+
+    isReturn: { type: Boolean, default: false },
+    lastSyncedAt: { type: Date },                        // last tracking pull
 
     events: { type: [eventSchema], default: [] },
 

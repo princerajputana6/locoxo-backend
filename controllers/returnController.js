@@ -2,6 +2,8 @@ import returnModel from '../models/returnModel.js';
 import orderModel from '../models/orderModel.js';
 import productModel from '../models/productModel.js';
 import stockAdjustmentModel from '../models/stockAdjustmentModel.js';
+import shipmentModel from '../models/shipmentModel.js';
+import { getAdapter } from '../services/shipping/index.js';
 import { customerIdFor } from '../utils/orderNumber.js';
 
 const pushHistory = (doc, status, by, note) => {
@@ -68,16 +70,59 @@ const createReturn = async (req, res) => {
     }
 };
 
-// POST /api/return/pickup/:id — create a pickup request.
+// POST /api/return/pickup/:id — create a reverse pickup request.
+// Allocates a return courier via the shipping provider (best-effort) so the AWB,
+// courier and live status flow into the return + a tracked shipment record.
 const createPickupRequest = async (req, res) => {
     try {
         const doc = await returnModel.findById(req.params.id);
         if (!doc) return res.json({ success: false, message: 'Return not found' });
         doc.status = 'pickup_requested';
         doc.pickupRequestedAt = new Date();
-        pushHistory(doc, 'pickup_requested', req.adminEmail);
+
+        // Try to auto-allocate a reverse-pickup courier from the original order's address.
+        let allocMsg = '';
+        try {
+            const order = await orderModel.findById(doc.orderId);
+            if (order && order.address?.pincode) {
+                const adapter = getAdapter();
+                if (adapter.createReturn) {
+                    const result = await adapter.createReturn({
+                        orderNumber: doc.returnNumber || `RET-${String(doc._id).slice(-6).toUpperCase()}`,
+                        address: order.address,
+                        billingEmail: order.billingEmail,
+                        items: [{ name: doc.sku || 'Return item', sku: doc.sku, quantity: doc.quantity || 1, price: 0, image: (doc.images || [])[0] }],
+                        subtotal: 0, amount: 0, paymentMethod: 'PREPAID',
+                        delivery: {},
+                    });
+                    if (result.awb) {
+                        doc.pickupTrackingId = result.awb;
+                        doc.returnCourier = result.courierName || adapter.name;
+                        allocMsg = ` · ${result.courierName || 'courier'} allocated (AWB ${result.awb})`;
+                        // Track it like any other shipment so the poller keeps it fresh.
+                        try {
+                            await shipmentModel.create({
+                                orderId: doc.orderId, userId: doc.userId,
+                                provider: adapter.name, awb: result.awb,
+                                status: 'created', isReturn: true,
+                                courierName: result.courierName, courierCompanyId: result.courierCompanyId,
+                                providerShipmentId: result.providerShipmentId, providerOrderId: result.providerOrderId,
+                                charges: result.charges,
+                                events: [{ status: 'created', description: `Reverse pickup allocated: ${result.courierName || adapter.name}`, timestamp: new Date() }],
+                                providerPayload: result.raw,
+                            });
+                        } catch (e) { console.log('return shipment create:', e.message); }
+                    }
+                }
+            }
+        } catch (e) {
+            // Non-fatal — pickup is still requested; admin can retry / do it manually.
+            console.log('reverse pickup allocation:', e.message);
+        }
+
+        pushHistory(doc, 'pickup_requested', req.adminEmail, allocMsg.trim() || undefined);
         await doc.save();
-        res.json({ success: true, message: 'Pickup requested', return: doc });
+        res.json({ success: true, message: `Pickup requested${allocMsg}`, return: doc });
     } catch (error) {
         console.log(error);
         res.json({ success: false, message: error.message });

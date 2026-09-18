@@ -10,6 +10,8 @@ import fs from 'fs';
 import { createOrder as createCashfreeOrder, getOrderStatus as getCashfreeStatus } from '../services/cashfreeService.js';
 import { generateOrderNumber, customerIdFor } from '../utils/orderNumber.js';
 import couponModel from '../models/couponModel.js';
+import shipmentModel from '../models/shipmentModel.js';
+import { getAdapter } from '../services/shipping/index.js';
 
 // Re-validate a coupon server-side and return the discount (never trust a client amount).
 const couponDiscountFor = async (code, subtotal) => {
@@ -546,6 +548,19 @@ const updateStatus = async (req,res) => {
         if (status === 'Packed' && !order.inventoryReduced) {
             await reduceInventoryForOrder(order, admin)
             order.inventoryReduced = true
+        }
+
+        // Cancelling a shipped order → also cancel the carrier shipment (best-effort).
+        if (status === 'Cancelled') {
+            try {
+                const shipment = await shipmentModel.findOne({ orderId, isReturn: { $ne: true } })
+                if (shipment?.awb && shipment.status !== 'cancelled') {
+                    await getAdapter(shipment.provider).cancel(shipment.awb)
+                    shipment.status = 'cancelled'
+                    shipment.events.push({ status: 'cancelled', description: 'Order cancelled by admin', timestamp: new Date() })
+                    await shipment.save()
+                }
+            } catch (e) { console.log('shipment cancel on order cancel:', e.message) }
         }
 
         order.status = status
