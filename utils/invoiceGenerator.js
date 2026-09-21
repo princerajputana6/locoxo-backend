@@ -89,7 +89,7 @@ const generateInvoice = async (orderData) => {
 
             // ── Header: logo + Tax Invoice title ────────────────────────────────
             const logoPath = path.join(process.cwd(), 'assets', 'logo.png');
-            if (fs.existsSync(logoPath)) { try { doc.image(logoPath, L, 26, { width: 90 }); } catch { /* ignore */ } }
+            if (fs.existsSync(logoPath)) { try { doc.image(logoPath, L, 26, { width: 113 }); } catch { /* ignore */ } }
             doc.font('Helvetica-Bold').fontSize(15).fillColor('#111').text('Tax Invoice', L, 30, { width: W, align: 'right' });
             doc.font('Helvetica').fontSize(7).fillColor('#666').text('Original for Recipient', L, 48, { width: W, align: 'right' });
 

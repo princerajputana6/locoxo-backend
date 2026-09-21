@@ -569,26 +569,21 @@ const updateStatus = async (req,res) => {
                     dimensions: order.delivery?.dimensions,
                 })
                 const awb = shipment?.awb
-                const courier = result?.courierName || shipment?.courierName || 'courier'
-                return res.json({
-                    success: true,
-                    message: alreadyShipped ? `Order already shipped (AWB ${awb})` : `Shipped via ${courier} — AWB ${awb}`,
-                    orderNumber: order.orderNumber,
-                    awb,
-                })
+                const courier = result?.courierName || shipment?.courierName
+                const message = alreadyShipped
+                    ? 'Order already sent to Velocity'
+                    : courier
+                        ? `Shipped via ${courier}${awb ? ` — AWB ${awb}` : ''}`
+                        : 'Order created at Velocity — allocate a courier from the Velocity dashboard'
+                return res.json({ success: true, message, orderNumber: order.orderNumber, awb })
             } catch (e) {
                 console.log('auto-ship on status update:', e.message)
                 return res.json({ success: false, message: `Could not ship: ${e.message}` })
             }
         }
 
-        // Confirmed → assign the LX order number (if still on a legacy/temp one) and
-        // generate the invoice.
-        if (status === 'Confirmed') {
-            if (!/^LX\d{4}100/.test(order.orderNumber || '')) {
-                order.orderNumber = await generateOrderNumber()
-            }
-        }
+        // NOTE: the order number is assigned at placement and never changes on
+        // confirm — the ID the customer sees must stay stable across the workflow.
 
         // Packed → decrement inventory exactly once and log the sale.
         if (status === 'Packed' && !order.inventoryReduced) {

@@ -121,7 +121,7 @@ export const shipOrder = async (order, { provider, carrierId, weight, dimensions
         appliedWeight: result.appliedWeight,
         cod: result.cod,
         charges: result.charges,
-        events: [{ status: 'created', description: `Courier allocated: ${result.courierName || adapter.name}`, timestamp: new Date() }],
+        events: [{ status: 'created', description: result.courierName ? `Courier allocated: ${result.courierName}` : 'Order created at Velocity — awaiting courier allocation', timestamp: new Date() }],
         providerPayload: result.raw,
     }
 
@@ -144,7 +144,10 @@ export const createShipment = async (req, res) => {
         const { shipment, result, alreadyShipped } = await shipOrder(order, { provider, carrierId, weight, dimensions })
         if (alreadyShipped) return res.json({ success: false, message: 'Shipment already exists for this order', shipment })
 
-        res.json({ success: true, message: `Shipped via ${result.courierName || shipment.provider}`, shipment })
+        const msg = result.courierName
+            ? `Shipped via ${result.courierName}`
+            : 'Order created at Velocity — allocate a courier from the Velocity dashboard'
+        res.json({ success: true, message: msg, shipment })
     } catch (error) {
         console.log('createShipment:', error.message)
         res.json({ success: false, message: error.message })

@@ -178,8 +178,9 @@ const drawApparelTag = (doc, product, v = {}, png, x0, y0) => {
 
     // Brand logo on top (centred). Falls back to a text wordmark if missing.
     if (HAS_LOGO) {
-        try { doc.image(LOGO_PATH, x0 + (W - 54) / 2, y, { width: 54, height: 18, fit: [54, 18], align: 'center' }) } catch { /* ignore */ }
-        y += 22
+        // Logo sized 25% larger (was 54×18 → now 68×23).
+        try { doc.image(LOGO_PATH, x0 + (W - 68) / 2, y, { width: 68, height: 23, fit: [68, 23], align: 'center' }) } catch { /* ignore */ }
+        y += 27
     } else {
         doc.font('Helvetica-Bold').fontSize(12).fillColor('#0E4F86').text('LOCOXO', LX, y, { width: innerW, align: 'center' }); y = doc.y + 4
     }

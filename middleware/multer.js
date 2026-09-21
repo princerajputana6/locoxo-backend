@@ -29,11 +29,10 @@ export const uploadMedia = multer({
     storage,
     limits: { fileSize: MAX_VIDEO_MB * 1024 * 1024 },
     fileFilter: (req, file, callback) => {
-        if (file.fieldname === 'video') {
-            if (file.mimetype?.startsWith('video/')) return callback(null, true)
-            return callback(new Error('Only video files are allowed for the video field'))
-        }
-        if (file.mimetype?.startsWith('image/')) return callback(null, true)
+        // Accept images AND videos on any field. The colour-wise Add/Edit product
+        // flow uploads videos under per-colour field names (c0_vid0, c1_vid1, …)
+        // via uploadMedia.any(), so the filter can't key off the field name.
+        if (file.mimetype?.startsWith('image/') || file.mimetype?.startsWith('video/')) return callback(null, true)
         callback(new Error('Only image/video files are allowed'))
     },
 })

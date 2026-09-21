@@ -210,14 +210,20 @@ const velocityAdapter = {
             vendor_details: vendorDetails(),
         }
 
-        const data = await request('/custom/api/v1/forward-order-orchestration', payload)
+        // Default: create the order at Velocity WITHOUT allocating a courier
+        // (it lands as a new/unassigned order — the seller allocates it later via
+        // Velocity's dashboard or shipping rules). Set VELOCITY_AUTO_ALLOCATE=true
+        // to instead auto-allocate a courier + AWB in one shot (orchestration).
+        const autoAllocate = process.env.VELOCITY_AUTO_ALLOCATE === 'true'
+        const endpoint = autoAllocate ? '/custom/api/v1/forward-order-orchestration' : '/custom/api/v1/forward-order'
+        const data = await request(endpoint, payload)
         const p = data.payload || {}
-        if (!p.awb_code) {
-            throw new Error(`Courier allocation failed for ${order.orderNumber} — Velocity returned no AWB`)
+        if (!p.order_created && !p.shipment_id && !p.awb_code) {
+            throw new Error(`Order creation failed at Velocity for ${order.orderNumber}`)
         }
 
         return {
-            awb: p.awb_code,
+            awb: p.awb_code || '',
             courierName: p.courier_name || '',
             courierCompanyId: p.courier_company_id || '',
             labelUrl: p.label_url || null,
@@ -227,7 +233,7 @@ const velocityAdapter = {
             appliedWeight: p.applied_weight ?? weight,
             cod: !!p.cod,
             charges: p.charges || null,
-            trackingUrl: `${BASE_URL.replace('shazam.', 'shipfastt.').replace('.velocity.in', '.in')}/track/${p.awb_code}`,
+            trackingUrl: p.awb_code ? `${BASE_URL.replace('shazam.', 'shipfastt.').replace('.velocity.in', '.in')}/track/${p.awb_code}` : null,
             expectedDelivery: null,
             raw: data,
         }
