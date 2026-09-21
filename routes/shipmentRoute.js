@@ -6,6 +6,7 @@ import {
     trackByAwb,
     refreshTracking,
     cancelShipment,
+    assignCourier,
     checkServiceability,
     getShippingSettings,
     createWarehouse,
@@ -29,6 +30,7 @@ shipmentRouter.post('/admin/create', adminAuth, createShipment)      // ship = a
 shipmentRouter.post('/admin/:id/event', adminAuth, appendEvent)
 shipmentRouter.get('/admin/order/:orderId', adminAuth, getByOrder)
 shipmentRouter.post('/admin/refresh', adminAuth, refreshTracking)
+shipmentRouter.post('/admin/assign', adminAuth, assignCourier)     // create-only → allocate courier
 shipmentRouter.post('/admin/cancel', adminAuth, cancelShipment)
 shipmentRouter.post('/admin/serviceability', adminAuth, checkServiceability)
 

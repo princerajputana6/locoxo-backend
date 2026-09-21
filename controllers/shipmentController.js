@@ -271,6 +271,46 @@ export const syncActiveShipments = async () => {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Admin: assign a courier to a create-only order (2nd step) → pulls AWB + label
+// + starts tracking. carrierId blank = auto-allocate by Velocity's shipping rules.
+// ─────────────────────────────────────────────────────────────────────────────
+export const assignCourier = async (req, res) => {
+    try {
+        const { orderId, carrierId } = req.body
+        const shipment = await shipmentModel.findOne({ orderId, isReturn: { $ne: true } })
+        if (!shipment) return res.json({ success: false, message: 'No shipment yet — ship the order first' })
+        if (shipment.awb) return res.json({ success: false, message: 'A courier is already assigned', shipment })
+        if (!shipment.providerShipmentId) return res.json({ success: false, message: 'Missing Velocity shipment id — re-ship the order' })
+
+        const adapter = getAdapter(shipment.provider)
+        if (!adapter.assignForwardCourier) return res.json({ success: false, message: 'Provider does not support courier assignment' })
+
+        const result = await adapter.assignForwardCourier(shipment.providerShipmentId, carrierId)
+        Object.assign(shipment, {
+            awb: result.awb,
+            carrierTrackUrl: result.trackingUrl || shipment.carrierTrackUrl,
+            courierName: result.courierName,
+            courierCompanyId: result.courierCompanyId,
+            labelUrl: result.labelUrl,
+            manifestUrl: result.manifestUrl,
+            providerOrderId: result.providerOrderId || shipment.providerOrderId,
+            appliedWeight: result.appliedWeight ?? shipment.appliedWeight,
+            charges: result.charges || shipment.charges,
+            status: 'label_generated',
+        })
+        shipment.events.push({ status: 'label_generated', description: `Courier allocated: ${result.courierName || adapter.name}`, timestamp: new Date() })
+        await shipment.save()
+
+        const orderStatus = await syncOrderFromShipment(shipment)
+        broadcast(shipment, orderStatus)
+        res.json({ success: true, message: `Courier allocated: ${result.courierName || 'courier'} — AWB ${result.awb}`, shipment })
+    } catch (error) {
+        console.log('assignCourier:', error.message)
+        res.json({ success: false, message: error.message })
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Admin: cancel a shipment (before pickup) via the provider.
 // ─────────────────────────────────────────────────────────────────────────────
 export const cancelShipment = async (req, res) => {

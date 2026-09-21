@@ -240,6 +240,38 @@ const velocityAdapter = {
     },
 
     /**
+     * Assign a courier to an already-created forward order (2nd step after a
+     * create-only /forward-order). Uses the stored Velocity shipment_id and
+     * returns the AWB + courier + label so tracking can begin.
+     * @param shipmentId Velocity shipment_id (SHI…)
+     * @param carrierId  optional specific carrier; blank ⇒ auto by shipping rules
+     */
+    async assignForwardCourier(shipmentId, carrierId = '') {
+        const data = await request('/custom/api/v1/forward-order-shipment', {
+            shipment_id: shipmentId,
+            carrier_id: carrierId || '',
+        })
+        const p = data.payload || {}
+        if (!p.awb_code) {
+            throw new Error(p.message || 'Courier allocation failed — Velocity returned no AWB')
+        }
+        return {
+            awb: p.awb_code,
+            courierName: p.courier_name || '',
+            courierCompanyId: p.courier_company_id || '',
+            labelUrl: p.label_url || null,
+            manifestUrl: p.manifest_url || null,
+            providerShipmentId: p.shipment_id || shipmentId,
+            providerOrderId: p.order_id || '',
+            appliedWeight: p.applied_weight ?? null,
+            cod: !!p.cod,
+            charges: p.charges || null,
+            trackingUrl: `${BASE_URL.replace('shazam.', 'shipfastt.').replace('.velocity.in', '.in')}/track/${p.awb_code}`,
+            raw: data,
+        }
+    },
+
+    /**
      * Reverse (return) pickup — create order + allocate courier in one shot.
      * `order` here is a return-shaped object (customer = pickup, warehouse = drop).
      */
