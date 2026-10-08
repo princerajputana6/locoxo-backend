@@ -540,7 +540,7 @@ const userOrders = async (req,res) => {
         
         const { userId } = req.body
 
-        const orders = await orderModel.find({ userId })
+        const orders = await orderModel.find({ userId }).sort({ date: -1 }).lean()
         res.json({success:true,orders})
 
     } catch (error) {

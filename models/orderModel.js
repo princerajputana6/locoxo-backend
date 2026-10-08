@@ -109,5 +109,12 @@ const orderSchema = new mongoose.Schema({
     date: { type: Number, required: true }
 }, { timestamps: true })
 
+// Indexes for the hot admin/customer queries: list by user, filter by status,
+// sort by date, and the admin date-range filter.
+orderSchema.index({ userId: 1 })
+orderSchema.index({ status: 1 })
+orderSchema.index({ date: -1 })
+orderSchema.index({ influencerId: 1 })
+
 const orderModel = mongoose.models.order || mongoose.model('order',orderSchema)
 export default orderModel;

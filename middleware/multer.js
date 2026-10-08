@@ -1,7 +1,8 @@
 import multer from "multer";
+import fs from "fs";
 
 // Max accepted size per image, for BOTH single Add Product and Bulk Add uploads.
-export const MAX_IMAGE_MB = 5;
+export const MAX_IMAGE_MB = 10;
 
 const storage = multer.diskStorage({
     filename: function (req, file, callback) {
@@ -36,6 +37,20 @@ export const uploadMedia = multer({
         callback(new Error('Only image/video files are allowed'))
     },
 })
+
+// Runs AFTER uploadMedia (which allows up to MAX_VIDEO_MB so videos pass): rejects
+// any IMAGE larger than MAX_IMAGE_MB with a clear message, cleaning up temp files.
+// Works for both .fields() (req.files = object) and .any() (req.files = array).
+export const enforceImageSize = (req, res, next) => {
+    const max = MAX_IMAGE_MB * 1024 * 1024
+    const files = req.files ? (Array.isArray(req.files) ? req.files : Object.values(req.files).flat()) : []
+    const tooBig = files.find((f) => f.mimetype?.startsWith('image/') && f.size > max)
+    if (tooBig) {
+        for (const f of files) { try { fs.unlinkSync(f.path) } catch { /* ignore */ } }
+        return res.status(400).json({ success: false, message: `Image too large — max ${MAX_IMAGE_MB}MB per image (${tooBig.originalname})` })
+    }
+    next()
+}
 
 // Spreadsheet import (.xlsx / .xls / .csv) for bulk product import.
 export const uploadImport = multer({

@@ -1,6 +1,6 @@
 import express from 'express'
 import { listProducts, addProduct, removeProduct, singleProduct, getRelatedProducts, getRecentlyViewed, updateProduct, updateStock, setProductStatus, duplicateProduct, productDashboard, productsAddedReport, importExcel, addProductColourwise, updateProductColourwise } from '../controllers/productController.js'
-import { uploadMedia, uploadImport } from '../middleware/multer.js';
+import { uploadMedia, uploadImport, enforceImageSize } from '../middleware/multer.js';
 import adminAuth from '../middleware/adminAuth.js';
 
 const productRouter = express.Router();
@@ -13,11 +13,11 @@ const productMedia = uploadMedia.fields([
     { name: 'sizeChart', maxCount: 1 }, { name: 'video', maxCount: 2 },
 ])
 
-productRouter.post('/add', adminAuth, productMedia, addProduct);
-productRouter.post('/add-colourwise', adminAuth, uploadMedia.any(), addProductColourwise);
-productRouter.put('/update-colourwise/:id', adminAuth, uploadMedia.any(), updateProductColourwise);
+productRouter.post('/add', adminAuth, productMedia, enforceImageSize, addProduct);
+productRouter.post('/add-colourwise', adminAuth, uploadMedia.any(), enforceImageSize, addProductColourwise);
+productRouter.put('/update-colourwise/:id', adminAuth, uploadMedia.any(), enforceImageSize, updateProductColourwise);
 productRouter.post('/remove', adminAuth, removeProduct);
-productRouter.put('/update/:id', adminAuth, productMedia, updateProduct);
+productRouter.put('/update/:id', adminAuth, productMedia, enforceImageSize, updateProduct);
 productRouter.put('/status/:id', adminAuth, setProductStatus);
 productRouter.post('/duplicate/:id', adminAuth, duplicateProduct);
 productRouter.put('/stock/:id', adminAuth, updateStock);

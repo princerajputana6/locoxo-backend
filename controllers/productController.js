@@ -161,8 +161,9 @@ const listProducts = async (req, res) => {
         const products = await productModel.find(filter)
             .sort(sortOptions)
             .skip(skip)
-            .limit(parseInt(limit));
-            
+            .limit(parseInt(limit))
+            .lean();
+
         const total = await productModel.countDocuments(filter);
         
         res.json({
