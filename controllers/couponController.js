@@ -1,5 +1,27 @@
 import couponModel from '../models/couponModel.js';
 
+// Public: active, visible, in-window coupons shown to customers (Cart offers).
+const availableCoupons = async (req, res) => {
+    try {
+        const now = new Date();
+        const coupons = await couponModel.find({
+            status: 'active',
+            visible: true,
+            validFrom: { $lte: now },
+            validUntil: { $gte: now },
+        })
+            .select('code name description discountType discountValue discountAmount minPurchaseAmount maxDiscountAmount validUntil showTimer isFirstOrderOnly usageLimit usedCount')
+            .sort({ createdAt: -1 })
+            .lean();
+        // Drop any that have hit their global usage limit.
+        const open = coupons.filter((c) => !c.usageLimit || (c.usedCount || 0) < c.usageLimit);
+        res.json({ success: true, coupons: open });
+    } catch (error) {
+        console.log(error);
+        res.json({ success: false, message: error.message });
+    }
+};
+
 const listCoupons = async (req, res) => {
     try {
         const { status } = req.query;
@@ -125,4 +147,4 @@ const validateCoupon = async (req, res) => {
     }
 };
 
-export { listCoupons, addCoupon, updateCoupon, deleteCoupon, validateCoupon };
+export { availableCoupons, listCoupons, addCoupon, updateCoupon, deleteCoupon, validateCoupon };

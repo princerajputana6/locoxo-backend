@@ -1,9 +1,10 @@
 import express from 'express';
-import { listCoupons, addCoupon, updateCoupon, deleteCoupon, validateCoupon } from '../controllers/couponController.js';
+import { availableCoupons, listCoupons, addCoupon, updateCoupon, deleteCoupon, validateCoupon } from '../controllers/couponController.js';
 import adminAuth from '../middleware/adminAuth.js';
 
 const couponRouter = express.Router();
 
+couponRouter.get('/available', availableCoupons);   // public — customer Cart offers
 couponRouter.get('/list', adminAuth, listCoupons);
 couponRouter.post('/add', adminAuth, addCoupon);
 couponRouter.put('/update/:id', adminAuth, updateCoupon);

@@ -480,6 +480,37 @@ const verifyCashfree = async (req,res) => {
     }
 }
 
+// Idempotently reconcile a Cashfree order's payment flag by re-checking the real
+// status with Cashfree (never trusts a client/webhook payload). Safe to call from
+// the webhook, admin views, etc. Returns the (possibly updated) order.
+const reconcileCashfreeOrder = async (orderId) => {
+    try {
+        const order = await orderModel.findById(orderId)
+        if (!order) return null
+        if (order.payment || String(order.paymentMethod).toLowerCase() !== 'cashfree') return order
+        const status = await getCashfreeStatus(order._id.toString())
+        if (status === 'PAID') {
+            order.payment = true
+            await order.save()
+            try { if (order.userId) await applyReferralReward(order.userId) } catch { /* ignore */ }
+            try { await generateInvoice(order) } catch (e) { console.log('invoice (reconcile):', e.message) }
+        }
+        return order
+    } catch (e) { console.log('reconcileCashfreeOrder:', e.message); return null }
+}
+
+// Public webhook — Cashfree calls this server-to-server on payment events, so the
+// order is marked paid even if the browser never returns to /verify-cashfree.
+// We re-verify with Cashfree inside reconcile, so an unsigned payload can't fake it.
+const cashfreeWebhook = async (req, res) => {
+    try {
+        const b = req.body || {}
+        const orderId = b?.data?.order?.order_id || b?.data?.order_id || b?.order_id
+        if (orderId) await reconcileCashfreeOrder(orderId)
+    } catch (e) { console.log('cashfreeWebhook:', e.message) }
+    res.json({ success: true }) // always 200 so Cashfree doesn't retry endlessly
+}
+
 // All Orders data for Admin Panel
 const allOrders = async (req,res) => {
     try {
@@ -519,6 +550,9 @@ const allOrders = async (req,res) => {
 // Single order (admin) — powers the full-page Order Details view.
 const getOrderById = async (req, res) => {
     try {
+        // Catch Cashfree payments whose browser redirect never completed, so the
+        // admin sees the true Paid/Pending status.
+        await reconcileCashfreeOrder(req.params.orderId).catch(() => {})
         const order = await orderModel.findById(req.params.orderId)
             .populate('userId', 'name email phone createdAt')
             .lean()
@@ -825,4 +859,4 @@ const downloadInvoice = async (req, res) => {
     }
 };
 
-export {verifyRazorpay, verifyStripe ,placeOrder, placeOrderStripe, placeOrderRazorpay, placeOrderCashfree, verifyCashfree, allOrders, userOrders, getOrderById, updateStatus, downloadInvoice, addOrderNote, setDelivery, createManualOrder, ordersReport, exportOrdersExcel, setPendingReason, verifyBarcode}
+export {verifyRazorpay, verifyStripe ,placeOrder, placeOrderStripe, placeOrderRazorpay, placeOrderCashfree, verifyCashfree, cashfreeWebhook, allOrders, userOrders, getOrderById, updateStatus, downloadInvoice, addOrderNote, setDelivery, createManualOrder, ordersReport, exportOrdersExcel, setPendingReason, verifyBarcode}

@@ -1,5 +1,5 @@
 import express from 'express'
-import {placeOrder, placeOrderStripe, placeOrderRazorpay, placeOrderCashfree, verifyCashfree, allOrders, userOrders, getOrderById, updateStatus, verifyStripe, verifyRazorpay, downloadInvoice, addOrderNote, setDelivery, createManualOrder, ordersReport, exportOrdersExcel, setPendingReason, verifyBarcode} from '../controllers/orderController.js'
+import {placeOrder, placeOrderStripe, placeOrderRazorpay, placeOrderCashfree, verifyCashfree, cashfreeWebhook, allOrders, userOrders, getOrderById, updateStatus, verifyStripe, verifyRazorpay, downloadInvoice, addOrderNote, setDelivery, createManualOrder, ordersReport, exportOrdersExcel, setPendingReason, verifyBarcode} from '../controllers/orderController.js'
 import adminAuth  from '../middleware/adminAuth.js'
 import authUser from '../middleware/auth.js'
 
@@ -22,6 +22,9 @@ orderRouter.post('/place',authUser,placeOrder)
 orderRouter.post('/stripe',authUser,placeOrderStripe)
 orderRouter.post('/razorpay',authUser,placeOrderRazorpay)
 orderRouter.post('/cashfree',authUser,placeOrderCashfree)
+
+// Public server-to-server webhook from Cashfree (no auth; re-verifies with Cashfree)
+orderRouter.post('/cashfree-webhook', cashfreeWebhook)
 
 // User Feature
 orderRouter.post('/userorders',authUser,userOrders)
