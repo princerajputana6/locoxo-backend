@@ -186,6 +186,11 @@ const velocityAdapter = {
         const weight = Number(opts.weight ?? order.delivery?.weight) || Number(process.env.VELOCITY_DEFAULT_WEIGHT) || 0.5
         const dims = parseDimensions(opts.dimensions ?? order.delivery?.dimensions)
 
+        // NET amount the customer actually pays, after coupon/discount (order.amount).
+        // Velocity collects `sub_total` for COD, so this MUST be the net payable —
+        // using the pre-discount order.subtotal over-charges COD by the coupon value.
+        const payable = Number(order.amount) || Number(order.subtotal) || 0
+
         const items = (order.items || []).map((it) => ({
             name: it.name,
             sku: it.sku || String(it.productId || it.name).slice(-24),
@@ -211,8 +216,12 @@ const velocityAdapter = {
             print_label: true,
             order_items: items,
             payment_method: isCOD ? 'COD' : 'PREPAID',
-            sub_total: Number(order.subtotal) || Number(order.amount) || 0,
-            cod_collectible: isCOD ? (Number(order.amount) || 0) : 0,
+            // Net payable only (no separate total_discount): Velocity collects
+            // `sub_total` for COD and ignored our cod_collectible in testing, so a
+            // separate discount field here could double-subtract. sub_total == the
+            // exact amount the customer pays.
+            sub_total: payable,
+            cod_collectible: isCOD ? payable : 0,
             length: dims.length,
             breadth: dims.breadth,
             height: dims.height,
