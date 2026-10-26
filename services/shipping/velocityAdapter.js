@@ -5,9 +5,12 @@
  * services/shipping/index.js → getAdapter(). Nothing outside this file knows the
  * Velocity request/response shapes.
  *
- * Auth: POST /custom/api/v1/auth-token with { username (mobile +91…), password }.
- * The returned token is sent as a raw `Authorization: <token>` header (NO Bearer)
- * and is valid for 24h — we cache it in memory and refresh a few minutes early.
+ * Auth (current): a long-lived API key created from the Velocity Shipping
+ * Dashboard, set as VELOCITY_API_KEY and sent as a raw `Authorization: <key>`
+ * header (NO Bearer). The old username/password `/auth-token` flow was
+ * DEPRECATED by Velocity (now returns 401 "This API is now deprecated… create
+ * API keys from the Velocity Shipping Dashboard"), so the API key is required.
+ * The legacy flow is kept only as a fallback for accounts not yet migrated.
  *
  * Docs: Velocity Shipping Custom API Documentation V1.
  *   Base URL           https://shazam.velocity.in/
@@ -20,7 +23,8 @@
  *   Tracking           /custom/api/v1/order-tracking
  *   Reports            /custom/api/v1/reports
  *
- * Required env:  VELOCITY_USERNAME, VELOCITY_PASSWORD
+ * Required env:  VELOCITY_API_KEY  (dashboard-issued API key)
+ * Legacy env:    VELOCITY_USERNAME, VELOCITY_PASSWORD  (deprecated fallback)
  * Optional env:  VELOCITY_BASE_URL, VELOCITY_WAREHOUSE_ID, VELOCITY_PICKUP_LOCATION,
  *                VELOCITY_CLIENT_ID
  */
@@ -29,17 +33,23 @@ import company from '../../config/company.js'
 import { getAdminSettings } from '../../models/adminSettingsModel.js'
 
 const BASE_URL = (process.env.VELOCITY_BASE_URL || 'https://shazam.velocity.in').replace(/\/+$/, '')
+const API_KEY = (process.env.VELOCITY_API_KEY || '').trim()
 const USERNAME = process.env.VELOCITY_USERNAME || ''
 const PASSWORD = process.env.VELOCITY_PASSWORD || ''
 
 // ── Token cache ──────────────────────────────────────────────────────────────
 let cached = { token: null, expiresAt: 0 }
 
-const isConfigured = () => Boolean(USERNAME && PASSWORD)
+// Configured when we have a dashboard API key (preferred) OR legacy credentials.
+const isConfigured = () => Boolean(API_KEY || (USERNAME && PASSWORD))
 
 const getToken = async () => {
-    if (!isConfigured()) {
-        throw new Error('Velocity Shipping is not configured — set VELOCITY_USERNAME and VELOCITY_PASSWORD in the backend .env')
+    // Preferred: a long-lived API key is used directly as the Authorization
+    // header — no /auth-token round-trip (that endpoint is deprecated).
+    if (API_KEY) return API_KEY
+
+    if (!(USERNAME && PASSWORD)) {
+        throw new Error('Velocity Shipping is not configured — set VELOCITY_API_KEY in the backend .env (create one from the Velocity Shipping Dashboard)')
     }
     // Reuse a still-valid token (refresh 5 min early).
     if (cached.token && Date.now() < cached.expiresAt - 5 * 60 * 1000) return cached.token
@@ -70,7 +80,9 @@ const request = async (path, body, { retry = true } = {}) => {
         body: JSON.stringify(body),
     })
     const data = await res.json().catch(() => ({}))
-    if (res.status === 401 && retry) {
+    // A 401 with a static API key means the key itself is rejected — retrying
+    // won't help. Only the legacy token flow benefits from a refresh+retry.
+    if (res.status === 401 && retry && !API_KEY) {
         cached = { token: null, expiresAt: 0 }
         return request(path, body, { retry: false })
     }

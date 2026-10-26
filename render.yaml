@@ -32,6 +32,10 @@ services:
       - key: ADMIN_URL
         sync: false
       # Velocity Shipping (delivery partner) — set values in the Render dashboard.
+      # VELOCITY_API_KEY is the current auth method (dashboard-issued key); the
+      # USERNAME/PASSWORD below are a deprecated legacy fallback.
+      - key: VELOCITY_API_KEY
+        sync: false
       - key: VELOCITY_USERNAME
         sync: false
       - key: VELOCITY_PASSWORD
