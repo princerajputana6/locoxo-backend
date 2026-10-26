@@ -8,14 +8,20 @@
 //   node scripts/migrate-to-new-db.js
 //   node scripts/migrate-to-new-db.js --force
 //
-// URIs can be overridden with OLD_MONGODB_URI / NEW_MONGODB_URI env vars.
+// Credentials are read from env only — never hardcode connection strings here
+// (they end up in git history). Provide them inline for a one-off run, e.g.:
+//   OLD_MONGODB_URI="mongodb+srv://USER:PASS@old.../" \
+//   NEW_MONGODB_URI="mongodb+srv://USER:PASS@new.../" \
+//   node scripts/migrate-to-new-db.js
 import 'dotenv/config'
 import mongoose from 'mongoose'
 
 const OLD_URI = process.env.OLD_MONGODB_URI
-    || '***REMOVED***'
 const NEW_URI = process.env.NEW_MONGODB_URI
-    || '***REMOVED***'
+if (!OLD_URI || !NEW_URI) {
+    console.error('Set OLD_MONGODB_URI and NEW_MONGODB_URI (do not hardcode credentials).')
+    process.exit(1)
+}
 const DB_NAME = 'locoxo'
 const BATCH = 500
 const FORCE = process.argv.includes('--force')
